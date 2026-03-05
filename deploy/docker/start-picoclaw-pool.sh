@@ -2,7 +2,7 @@
 set -euo pipefail
 
 COUNT="${1:-3}"
-IMAGE="${2:-ghcr.io/sipeed/picoclaw:latest}"
+IMAGE="${2:-docker.io/sipeed/picoclaw:latest}"
 NAME_PREFIX="${3:-picoclaw-agent}"
 LABEL="${4:-app=picoclaw-agent}"
 
@@ -16,8 +16,9 @@ for i in $(seq 1 "$COUNT"); do
   docker run -d \
     --name "$name" \
     --label "$LABEL" \
+    --entrypoint /bin/sh \
     "$IMAGE" \
-    /bin/sh -lc 'sleep infinity' >/dev/null
+    -lc 'sleep infinity' >/dev/null
   echo "started $name"
 done
 

@@ -83,17 +83,18 @@ func (d Docker) EnsurePool(ctx context.Context, opts EnsurePoolOptions) ([]strin
 		if err != nil {
 			return nil, err
 		}
-		if !exists {
-			args := []string{
-				"run", "-d",
-				"--name", name,
-				"--label", opts.Label,
-				opts.Image,
-				"sh", "-lc", opts.InitCmd,
-			}
-			if _, err := runCmd(ctx, d.binary(), args...); err != nil {
-				return nil, err
-			}
+			if !exists {
+				args := []string{
+					"run", "-d",
+					"--name", name,
+					"--label", opts.Label,
+					"--entrypoint", "/bin/sh",
+					opts.Image,
+					"-lc", opts.InitCmd,
+				}
+				if _, err := runCmd(ctx, d.binary(), args...); err != nil {
+					return nil, err
+				}
 		} else if !running {
 			if _, err := runCmd(ctx, d.binary(), "start", name); err != nil {
 				return nil, err
