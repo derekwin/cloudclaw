@@ -76,8 +76,23 @@ ensure_dirs() {
   mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$DATA_DIR" "$PICOCLAW_HOME_DIR" "$LOG_DIR" "$RUN_DIR"
 }
 
+fix_picoclaw_permissions() {
+  need_cmd docker
+  ensure_dirs
+  uid="$(id -u)"
+  gid="$(id -g)"
+  docker run --rm \
+    --entrypoint /bin/sh \
+    -v "$PICOCLAW_HOME_DIR:/root/.picoclaw" \
+    "$RUNNER_IMAGE" \
+    -lc "chown -R ${uid}:${gid} /root/.picoclaw 2>/dev/null || true; chmod -R u+rwX /root/.picoclaw 2>/dev/null || true" >/dev/null
+}
+
 picoclaw_config_needs_edit() {
   if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
+    return 0
+  fi
+  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
     return 0
   fi
   if grep -Eq 'YOUR_API_KEY(_HERE)?' "$PICOCLAW_CONFIG_FILE"; then
@@ -104,6 +119,8 @@ init_picoclaw_config() {
     "$RUNNER_IMAGE" \
     -lc 'picoclaw onboard >/dev/null 2>&1 || true; test -f /root/.picoclaw/config.json'
 
+  fix_picoclaw_permissions
+
   if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
     echo "failed to initialize picoclaw config file" >&2
     return 1
@@ -123,6 +140,20 @@ require_picoclaw_config_ready() {
   if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
     init_picoclaw_config
     return $?
+  fi
+  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
+    log "picoclaw config is not readable, attempting to fix permissions"
+    fix_picoclaw_permissions
+  fi
+  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
+    cat <<EOF
+[cloudclawctl] picoclaw config is not readable:
+  $PICOCLAW_CONFIG_FILE
+
+Please fix permissions (or remove and re-init), then run:
+  bash $0 up
+EOF
+    return 2
   fi
   if picoclaw_config_needs_edit; then
     cat <<EOF
