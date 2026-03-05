@@ -14,8 +14,8 @@ fi
 POOL_SIZE="${POOL_SIZE:-3}"
 POOL_LABEL="${POOL_LABEL:-app=picoclaw-agent}"
 POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-picoclaw-agent}"
-DEFAULT_BASE_IMAGE="ghcr.io/sipeed/picoclaw:latest"
-FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-docker.io/sipeed/picoclaw:latest}"
+DEFAULT_BASE_IMAGE="docker.io/sipeed/picoclaw:latest"
+FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-ghcr.io/sipeed/picoclaw:latest}"
 BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/picoclaw-runner:latest}"
 DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_picoclaw_task.sh}"
@@ -276,7 +276,7 @@ Environment overrides:
   POOL_SIZE (default: 3)
   POOL_LABEL (default: app=picoclaw-agent)
   POOL_NAME_PREFIX (default: picoclaw-agent)
-  BASE_IMAGE (default: ghcr.io/sipeed/picoclaw:latest)
+  BASE_IMAGE (default: docker.io/sipeed/picoclaw:latest)
   FALLBACK_BASE_IMAGE (default: docker.io/sipeed/picoclaw:latest)
   RUNNER_IMAGE (default: cloudclaw/picoclaw-runner:latest)
   PICO_MODEL_NAME (default: default)
