@@ -59,6 +59,7 @@ cat > "$TASK_HOME/config.json" <<JSON
   "agents": {
     "defaults": {
       "workspace": "$CLOUDCLAW_WORKSPACE",
+      "model": "$PICO_MODEL_NAME",
       "model_name": "$PICO_MODEL_NAME",
       "max_tokens": 8192,
       "temperature": 0.7,
@@ -75,7 +76,7 @@ JSON
 
 PICOCLAW_HOME="$TASK_HOME" \
 PICOCLAW_CONFIG="$TASK_HOME/config.json" \
-picoclaw agent -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
+picoclaw agent --model "$PICO_MODEL_NAME" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
 
 prompt_chars=$(printf "%s" "$CLOUDCLAW_INPUT" | wc -c | tr -d ' ')
 resp_chars=$(wc -c < "$CLOUDCLAW_WORKSPACE/result.txt" | tr -d ' ')
