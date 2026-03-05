@@ -4,7 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CC_HOME="${CC_HOME:-/srv/cloudclaw}"
+if [ -n "${CC_HOME:-}" ]; then
+  CC_HOME="$CC_HOME"
+elif [ -d "/srv" ] && [ -w "/srv" ]; then
+  CC_HOME="/srv/cloudclaw"
+else
+  CC_HOME="$HOME/.cloudclaw"
+fi
 POOL_SIZE="${POOL_SIZE:-3}"
 POOL_LABEL="${POOL_LABEL:-app=picoclaw-agent}"
 POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-picoclaw-agent}"
