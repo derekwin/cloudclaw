@@ -13,10 +13,15 @@ import (
 )
 
 type Executor interface {
+	Name() string
 	Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error)
 }
 
 type MockExecutor struct{}
+
+func (m *MockExecutor) Name() string {
+	return "mock"
+}
 
 func (m *MockExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
 	_ = ctx
@@ -36,6 +41,10 @@ func (m *MockExecutor) Execute(ctx context.Context, containerID string, task mod
 
 type CommandExecutor struct {
 	Command string
+}
+
+func (e *CommandExecutor) Name() string {
+	return "cmd"
 }
 
 func (e *CommandExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
@@ -64,16 +73,19 @@ func (e *CommandExecutor) Execute(ctx context.Context, containerID string, task 
 	usage := model.TokenUsage{}
 	if b, err := os.ReadFile(usagePath); err == nil {
 		if err := json.Unmarshal(b, &usage); err == nil {
-			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			if usage.TotalTokens <= 0 {
+				usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+			}
 			return usage, nil
 		}
 	}
 
+	promptTokens := estimateTokens(task.Input)
 	stdoutTokens := estimateTokens(string(out))
 	return model.TokenUsage{
-		PromptTokens:     estimateTokens(task.Input),
+		PromptTokens:     promptTokens,
 		CompletionTokens: stdoutTokens,
-		TotalTokens:      estimateTokens(task.Input) + stdoutTokens,
+		TotalTokens:      promptTokens + stdoutTokens,
 	}, nil
 }
 

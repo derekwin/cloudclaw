@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +83,43 @@ func TestRecoverExpiredLease(t *testing.T) {
 	}
 	if task.Priority != 0 {
 		t.Fatalf("expected retry priority=0, got %d", task.Priority)
+	}
+}
+
+func TestSubmitTaskValidation(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, err := s.SubmitTask(SubmitTaskInput{UserID: "", TaskType: "search"}); err == nil {
+		t.Fatal("expected error for empty user id")
+	}
+	if _, err := s.SubmitTask(SubmitTaskInput{UserID: "u1", TaskType: ""}); err == nil {
+		t.Fatal("expected error for empty task type")
+	}
+
+	task, err := s.SubmitTask(SubmitTaskInput{UserID: "  u1  ", TaskType: "  search  ", Input: "x"})
+	if err != nil {
+		t.Fatalf("submit task: %v", err)
+	}
+	if task.UserID != "u1" {
+		t.Fatalf("expected trimmed user_id, got %q", task.UserID)
+	}
+	if task.TaskType != "search" {
+		t.Fatalf("expected trimmed task_type, got %q", task.TaskType)
+	}
+}
+
+func TestGenIDUniqueness(t *testing.T) {
+	const n = 10000
+	seen := make(map[string]struct{}, n)
+	for i := 0; i < n; i++ {
+		id := genID("tsk")
+		if !strings.HasPrefix(id, "tsk_") {
+			t.Fatalf("unexpected id format: %s", id)
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate id generated: %s", id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 

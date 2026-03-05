@@ -1,0 +1,5 @@
+ARG BASE_IMAGE=ghcr.io/sipeed/picoclaw:latest
+FROM ${BASE_IMAGE}
+
+COPY run_picoclaw_task.sh /usr/local/bin/run_picoclaw_task.sh
+RUN chmod +x /usr/local/bin/run_picoclaw_task.sh

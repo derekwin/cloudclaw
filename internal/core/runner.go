@@ -1,26 +1,22 @@
-package engine
+package core
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	"cloudclaw/internal/fsutil"
 	"cloudclaw/internal/model"
-	"cloudclaw/internal/store"
+	"cloudclaw/internal/ports"
 )
 
 type RunnerConfig struct {
-	Store             *store.Store
-	Executor          Executor
-	PoolSize          int
-	ContainerIDs      []string
-	SharedSkillsDir   string
-	ReconcilePool     func(context.Context) error
+	Store             ports.TaskStore
+	Runtime           ports.RuntimeAdapter
+	Workspace         ports.WorkspaceManager
+	Pool              ports.PoolAdapter
 	PollInterval      time.Duration
 	LeaseDuration     time.Duration
 	HeartbeatInterval time.Duration
@@ -36,19 +32,15 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
-	if cfg.Executor == nil {
-		return nil, fmt.Errorf("executor is required")
+	if cfg.Runtime == nil {
+		return nil, fmt.Errorf("runtime adapter is required")
 	}
-	if cfg.PoolSize <= 0 {
-		cfg.PoolSize = 1
+	if cfg.Workspace == nil {
+		return nil, fmt.Errorf("workspace manager is required")
 	}
-	if len(cfg.ContainerIDs) == 0 {
-		cfg.ContainerIDs = make([]string, cfg.PoolSize)
-		for i := 0; i < cfg.PoolSize; i++ {
-			cfg.ContainerIDs[i] = fmt.Sprintf("container-%02d", i+1)
-		}
+	if cfg.Pool == nil {
+		return nil, fmt.Errorf("pool adapter is required")
 	}
-	cfg.PoolSize = len(cfg.ContainerIDs)
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 1 * time.Second
 	}
@@ -68,9 +60,16 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	var wg sync.WaitGroup
+	containerIDs, err := r.cfg.Pool.ContainerIDs(ctx)
+	if err != nil {
+		return err
+	}
+	if len(containerIDs) == 0 {
+		return fmt.Errorf("pool %s returned no container ids", r.cfg.Pool.Name())
+	}
 
-	for _, containerID := range r.cfg.ContainerIDs {
+	var wg sync.WaitGroup
+	for _, containerID := range containerIDs {
 		if err := r.setContainer(containerID, "idle", ""); err != nil {
 			return err
 		}
@@ -111,7 +110,7 @@ func (r *Runner) workerLoop(ctx context.Context, containerID string) {
 				continue
 			}
 			_ = r.setContainer(containerID, "running", task.ID)
-			r.cfg.Logger.Printf("task %s assigned to %s (attempt=%d)", task.ID, containerID, task.Attempts)
+			r.cfg.Logger.Printf("task %s assigned to %s (attempt=%d, runtime=%s)", task.ID, containerID, task.Attempts, r.cfg.Runtime.Name())
 			r.runTask(ctx, containerID, *task)
 			_ = r.setContainer(containerID, "idle", "")
 		}
@@ -145,20 +144,21 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 		}
 	}()
 
-	runDir, err := r.prepareRunWorkspace(task)
+	runDir, err := r.cfg.Workspace.Prepare(task)
 	if err != nil {
 		_ = r.cfg.Store.MarkTaskRetryOrFail(task.ID, containerID, fmt.Sprintf("workspace prepare failed: %v", err))
+		cancel()
 		<-heartbeatDone
 		return
 	}
 
-	usage, execErr := r.cfg.Executor.Execute(runCtx, containerID, task, runDir)
+	usage, execErr := r.cfg.Runtime.Execute(runCtx, containerID, task, runDir)
 	cancel()
 	<-heartbeatDone
 
 	cancelRequested, _ := r.cfg.Store.IsCancelRequested(task.ID)
 	if execErr == nil && !cancelRequested {
-		if err := r.persistUserData(task, runDir); err != nil {
+		if err := r.cfg.Workspace.Persist(task, runDir); err != nil {
 			execErr = fmt.Errorf("persist user data failed: %w", err)
 		}
 	}
@@ -191,48 +191,6 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 	r.cfg.Logger.Printf("task %s succeeded", task.ID)
 }
 
-func (r *Runner) prepareRunWorkspace(task model.Task) (string, error) {
-	userDataDir := r.cfg.Store.UserDataDir(task.UserID)
-	if err := fsutil.EnsureDir(userDataDir); err != nil {
-		return "", err
-	}
-	runDir := r.cfg.Store.RunDir(task.ID, task.Attempts)
-	if err := fsutil.RemoveAndRecreate(runDir); err != nil {
-		return "", err
-	}
-	if err := fsutil.CopyDir(userDataDir, runDir); err != nil {
-		return "", err
-	}
-	if err := r.syncSharedSkills(runDir); err != nil {
-		return "", err
-	}
-	return runDir, nil
-}
-
-func (r *Runner) persistUserData(task model.Task, runDir string) error {
-	// Shared skills are global resources and should not be persisted as user data.
-	_ = os.RemoveAll(filepath.Join(runDir, ".cloudclaw_shared_skills"))
-
-	userDataDir := r.cfg.Store.UserDataDir(task.UserID)
-	if err := fsutil.RemoveAndRecreate(userDataDir); err != nil {
-		return err
-	}
-	if err := fsutil.CopyDir(runDir, userDataDir); err != nil {
-		return err
-	}
-
-	snapID := fmt.Sprintf("%s-%d", task.ID, time.Now().UTC().Unix())
-	snapshotPath := filepath.Join(r.cfg.Store.UserSnapshotBaseDir(task.UserID), snapID)
-	if err := fsutil.RemoveAndRecreate(snapshotPath); err != nil {
-		return err
-	}
-	if err := fsutil.CopyDir(userDataDir, snapshotPath); err != nil {
-		return err
-	}
-	_, err := r.cfg.Store.SaveSnapshot(task.UserID, task.ID, snapshotPath)
-	return err
-}
-
 func (r *Runner) recoveryLoop(ctx context.Context) {
 	ticker := time.NewTicker(r.cfg.RecoveryInterval)
 	defer ticker.Stop()
@@ -241,10 +199,8 @@ func (r *Runner) recoveryLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if r.cfg.ReconcilePool != nil {
-				if err := r.cfg.ReconcilePool(ctx); err != nil {
-					r.cfg.Logger.Printf("pool reconcile failed: %v", err)
-				}
+			if err := r.cfg.Pool.Reconcile(ctx); err != nil {
+				r.cfg.Logger.Printf("pool reconcile failed (%s): %v", r.cfg.Pool.Name(), err)
 			}
 			recovered, err := r.cfg.Store.RecoverExpiredLeases()
 			if err != nil {
@@ -256,17 +212,6 @@ func (r *Runner) recoveryLoop(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (r *Runner) syncSharedSkills(runDir string) error {
-	if r.cfg.SharedSkillsDir == "" {
-		return nil
-	}
-	target := filepath.Join(runDir, ".cloudclaw_shared_skills")
-	if err := fsutil.RemoveAndRecreate(target); err != nil {
-		return err
-	}
-	return fsutil.CopyDir(r.cfg.SharedSkillsDir, target)
 }
 
 func (r *Runner) setContainer(containerID, state, taskID string) error {
