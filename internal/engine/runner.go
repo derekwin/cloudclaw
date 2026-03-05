@@ -19,6 +19,8 @@ type RunnerConfig struct {
 	Executor          Executor
 	PoolSize          int
 	ContainerIDs      []string
+	SharedSkillsDir   string
+	ReconcilePool     func(context.Context) error
 	PollInterval      time.Duration
 	LeaseDuration     time.Duration
 	HeartbeatInterval time.Duration
@@ -201,10 +203,16 @@ func (r *Runner) prepareRunWorkspace(task model.Task) (string, error) {
 	if err := fsutil.CopyDir(userDataDir, runDir); err != nil {
 		return "", err
 	}
+	if err := r.syncSharedSkills(runDir); err != nil {
+		return "", err
+	}
 	return runDir, nil
 }
 
 func (r *Runner) persistUserData(task model.Task, runDir string) error {
+	// Shared skills are global resources and should not be persisted as user data.
+	_ = os.RemoveAll(filepath.Join(runDir, ".cloudclaw_shared_skills"))
+
 	userDataDir := r.cfg.Store.UserDataDir(task.UserID)
 	if err := fsutil.RemoveAndRecreate(userDataDir); err != nil {
 		return err
@@ -233,6 +241,11 @@ func (r *Runner) recoveryLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if r.cfg.ReconcilePool != nil {
+				if err := r.cfg.ReconcilePool(ctx); err != nil {
+					r.cfg.Logger.Printf("pool reconcile failed: %v", err)
+				}
+			}
 			recovered, err := r.cfg.Store.RecoverExpiredLeases()
 			if err != nil {
 				r.cfg.Logger.Printf("recover leases failed: %v", err)
@@ -243,6 +256,17 @@ func (r *Runner) recoveryLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (r *Runner) syncSharedSkills(runDir string) error {
+	if r.cfg.SharedSkillsDir == "" {
+		return nil
+	}
+	target := filepath.Join(runDir, ".cloudclaw_shared_skills")
+	if err := fsutil.RemoveAndRecreate(target); err != nil {
+		return err
+	}
+	return fsutil.CopyDir(r.cfg.SharedSkillsDir, target)
 }
 
 func (r *Runner) setContainer(containerID, state, taskID string) error {

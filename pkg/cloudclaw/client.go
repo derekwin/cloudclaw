@@ -13,18 +13,34 @@ type Client struct {
 }
 
 type Config struct {
-	DataDir string
+	DataDir  string
+	DBDriver string
+	DBDSN    string
 }
 
 func NewClient(cfg Config) (*Client, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = "./data"
 	}
-	s, err := store.New(cfg.DataDir)
+	if cfg.DBDriver == "" {
+		cfg.DBDriver = "sqlite"
+	}
+	s, err := store.NewWithConfig(store.Config{
+		BaseDir: cfg.DataDir,
+		Driver:  cfg.DBDriver,
+		DSN:     cfg.DBDSN,
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &Client{store: s}, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil || c.store == nil {
+		return nil
+	}
+	return c.store.Close()
 }
 
 type SubmitTaskRequest struct {

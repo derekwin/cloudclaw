@@ -103,6 +103,7 @@ func (e *DockerPicoclawExecutor) renderCommand(task model.Task, remoteTaskDir, r
 		"CLOUDCLAW_INPUT=" + shellQuote(task.Input),
 		"CLOUDCLAW_TASK_FILE=" + shellQuote(remoteTaskFile),
 		"CLOUDCLAW_WORKSPACE=" + shellQuote(remoteTaskDir+"/userdata"),
+		"CLOUDCLAW_SHARED_SKILLS_DIR=" + shellQuote(remoteTaskDir+"/userdata/.cloudclaw_shared_skills"),
 		"CLOUDCLAW_USAGE_FILE=" + shellQuote(remoteUsageFile),
 	}
 	return strings.Join(envPrefix, " ") + " " + replaced

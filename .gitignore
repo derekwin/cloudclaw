@@ -1,0 +1,11 @@
+# Go build caches
+.gocache/
+.gomodcache/
+
+# Local runtime data
+data/
+*.db
+
+# Python
+__pycache__/
+*.pyc

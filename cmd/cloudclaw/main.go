@@ -20,6 +20,12 @@ import (
 	"cloudclaw/pkg/cloudclaw"
 )
 
+type commonStoreFlags struct {
+	dataDir  *string
+	dbDriver *string
+	dbDSN    *string
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -54,12 +60,13 @@ func main() {
 
 func runCmd(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	poolSize := fs.Int("pool-size", 2, "container pool size")
 	poll := fs.Duration("poll", 1*time.Second, "queue polling interval")
 	lease := fs.Duration("lease", 30*time.Second, "task lease duration")
 	heartbeat := fs.Duration("heartbeat", 5*time.Second, "task heartbeat interval")
 	recovery := fs.Duration("recovery", 3*time.Second, "lease recovery interval")
+	sharedSkillsDir := fs.String("shared-skills-dir", "", "global shared skills directory injected into each task workspace")
 	executorMode := fs.String("executor", "mock", "executor mode: mock|cmd|k8s-picoclaw|docker-picoclaw")
 	execCmd := fs.String("exec-cmd", "", "executor command when --executor=cmd")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for picoclaw pods")
@@ -72,17 +79,28 @@ func runCmd(args []string) error {
 	dockerLabelSelector := fs.String("docker-label-selector", "app=picoclaw-agent", "docker container label selector, supports comma separated key=value")
 	dockerRemoteDir := fs.String("docker-remote-dir", "/workspace/cloudclaw", "task workspace base directory inside container")
 	dockerTaskCmd := fs.String("docker-task-cmd", "", "task command executed inside selected container; supports {{TASK_DIR}} {{TASK_FILE}} {{USAGE_FILE}} {{USERDATA_DIR}}")
+	dockerManagePool := fs.Bool("docker-manage-pool", false, "whether cloudclaw should ensure docker prewarm pool")
+	dockerPoolSize := fs.Int("docker-pool-size", 3, "target container count when --docker-manage-pool=true")
+	dockerImage := fs.String("docker-image", "ghcr.io/sipeed/picoclaw:latest", "docker image for prewarm pool")
+	dockerNamePrefix := fs.String("docker-name-prefix", "picoclaw-agent", "container name prefix for prewarm pool")
+	dockerInitCmd := fs.String("docker-init-cmd", "sleep infinity", "container init command when creating prewarm pool")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	s, err := store.New(*dataDir)
+	s, err := store.NewWithConfig(store.Config{
+		BaseDir: *sf.dataDir,
+		Driver:  *sf.dbDriver,
+		DSN:     *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer s.Close()
 
 	var ex engine.Executor
 	containerIDs := []string{}
+	var poolReconciler func(context.Context) error
 	switch *executorMode {
 	case "mock":
 		ex = &engine.MockExecutor{}
@@ -122,7 +140,14 @@ func runCmd(args []string) error {
 		dk := dockerutil.Docker{Binary: *dockerBin}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		containers, err := dk.ListRunningContainers(ctx, *dockerLabelSelector)
+		containers, err := resolveDockerContainers(ctx, dk, dockerResolveOptions{
+			ManagePool:    *dockerManagePool,
+			PoolSize:      *dockerPoolSize,
+			Image:         *dockerImage,
+			NamePrefix:    *dockerNamePrefix,
+			LabelSelector: *dockerLabelSelector,
+			InitCmd:       *dockerInitCmd,
+		})
 		if err != nil {
 			return err
 		}
@@ -136,6 +161,19 @@ func runCmd(args []string) error {
 			RemoteBaseDir: *dockerRemoteDir,
 			TaskCommand:   *dockerTaskCmd,
 		}
+		if *dockerManagePool {
+			poolReconciler = func(ctx context.Context) error {
+				_, err := resolveDockerContainers(ctx, dk, dockerResolveOptions{
+					ManagePool:    true,
+					PoolSize:      *dockerPoolSize,
+					Image:         *dockerImage,
+					NamePrefix:    *dockerNamePrefix,
+					LabelSelector: *dockerLabelSelector,
+					InitCmd:       *dockerInitCmd,
+				})
+				return err
+			}
+		}
 	default:
 		return fmt.Errorf("unknown executor mode: %s", *executorMode)
 	}
@@ -145,6 +183,8 @@ func runCmd(args []string) error {
 		Executor:          ex,
 		PoolSize:          len(containerIDs),
 		ContainerIDs:      containerIDs,
+		SharedSkillsDir:   strings.TrimSpace(*sharedSkillsDir),
+		ReconcilePool:     poolReconciler,
 		PollInterval:      *poll,
 		LeaseDuration:     *lease,
 		HeartbeatInterval: *heartbeat,
@@ -156,7 +196,7 @@ func runCmd(args []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	log.Printf("cloudclaw runner started data_dir=%s pool_size=%d executor=%s", *dataDir, len(containerIDs), *executorMode)
+	log.Printf("cloudclaw runner started data_dir=%s db_driver=%s pool_size=%d executor=%s", *sf.dataDir, *sf.dbDriver, len(containerIDs), *executorMode)
 	return r.Run(ctx)
 }
 
@@ -190,7 +230,7 @@ func taskCmd(args []string) error {
 
 func taskSubmitCmd(args []string) error {
 	fs := flag.NewFlagSet("task submit", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	userID := fs.String("user-id", "", "user id")
 	taskType := fs.String("task-type", "", "task type")
 	input := fs.String("input", "", "task input")
@@ -198,10 +238,15 @@ func taskSubmitCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	task, err := cli.SubmitTask(cloudclaw.SubmitTaskRequest{
 		UserID:     *userID,
 		TaskType:   *taskType,
@@ -216,7 +261,7 @@ func taskSubmitCmd(args []string) error {
 
 func taskStatusCmd(args []string) error {
 	fs := flag.NewFlagSet("task status", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	taskID := fs.String("task-id", "", "task id")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -224,10 +269,15 @@ func taskStatusCmd(args []string) error {
 	if *taskID == "" {
 		return fmt.Errorf("task-id is required")
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	task, err := cli.GetTask(*taskID)
 	if err != nil {
 		return err
@@ -237,7 +287,7 @@ func taskStatusCmd(args []string) error {
 
 func taskCancelCmd(args []string) error {
 	fs := flag.NewFlagSet("task cancel", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	taskID := fs.String("task-id", "", "task id")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -245,10 +295,15 @@ func taskCancelCmd(args []string) error {
 	if *taskID == "" {
 		return fmt.Errorf("task-id is required")
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	task, err := cli.CancelTask(*taskID)
 	if err != nil {
 		return err
@@ -258,14 +313,19 @@ func taskCancelCmd(args []string) error {
 
 func queueLengthCmd(args []string) error {
 	fs := flag.NewFlagSet("queue-length", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	n, err := cli.QueueLength()
 	if err != nil {
 		return err
@@ -275,14 +335,19 @@ func queueLengthCmd(args []string) error {
 
 func containerStatusCmd(args []string) error {
 	fs := flag.NewFlagSet("container-status", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	list, err := cli.ContainerStatus()
 	if err != nil {
 		return err
@@ -292,15 +357,20 @@ func containerStatusCmd(args []string) error {
 
 func auditCmd(args []string) error {
 	fs := flag.NewFlagSet("audit", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	sf := bindCommonStoreFlags(fs)
 	taskID := fs.String("task-id", "", "task id (optional)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{DataDir: *dataDir})
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
 	if err != nil {
 		return err
 	}
+	defer cli.Close()
 	events, err := cli.TaskEvents(*taskID)
 	if err != nil {
 		return err
@@ -316,11 +386,44 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-  cloudclaw run [--data-dir ./data --pool-size 2 --executor mock|cmd|k8s-picoclaw|docker-picoclaw]
+  cloudclaw run [--data-dir ./data --db-driver sqlite --executor mock|cmd|k8s-picoclaw|docker-picoclaw]
   cloudclaw task submit --user-id u1 --task-type search --input "..."
   cloudclaw task status --task-id tsk_xxx
   cloudclaw task cancel --task-id tsk_xxx
   cloudclaw queue-length
   cloudclaw container-status
   cloudclaw audit [--task-id tsk_xxx]`)
+}
+
+func bindCommonStoreFlags(fs *flag.FlagSet) commonStoreFlags {
+	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	dbDriver := fs.String("db-driver", "sqlite", "database driver: sqlite|postgres")
+	dbDSN := fs.String("db-dsn", "", "database dsn; sqlite default is <data-dir>/cloudclaw.db")
+	return commonStoreFlags{
+		dataDir:  dataDir,
+		dbDriver: dbDriver,
+		dbDSN:    dbDSN,
+	}
+}
+
+type dockerResolveOptions struct {
+	ManagePool    bool
+	PoolSize      int
+	Image         string
+	NamePrefix    string
+	LabelSelector string
+	InitCmd       string
+}
+
+func resolveDockerContainers(ctx context.Context, dk dockerutil.Docker, opts dockerResolveOptions) ([]string, error) {
+	if opts.ManagePool {
+		return dk.EnsurePool(ctx, dockerutil.EnsurePoolOptions{
+			Image:      opts.Image,
+			NamePrefix: opts.NamePrefix,
+			Label:      opts.LabelSelector,
+			PoolSize:   opts.PoolSize,
+			InitCmd:    opts.InitCmd,
+		})
+	}
+	return dk.ListRunningContainers(ctx, opts.LabelSelector)
 }
