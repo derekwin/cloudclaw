@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +70,10 @@ func runCmd(args []string) error {
 	heartbeat := fs.Duration("heartbeat", 5*time.Second, "task heartbeat interval")
 	recovery := fs.Duration("recovery", 3*time.Second, "lease recovery interval")
 	sharedSkillsDir := fs.String("shared-skills-dir", "", "global shared skills directory injected into each task workspace")
+	sharedSkillsMode := fs.String("shared-skills-mode", "copy", "shared skills mode: copy|mount")
+	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
+	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker-picoclaw only)")
+	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
 	executorMode := fs.String("executor", "mock", "executor mode: mock|cmd|k8s-picoclaw|docker-picoclaw")
 	execCmd := fs.String("exec-cmd", "", "executor command when --executor=cmd")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for picoclaw pods")
@@ -86,14 +91,20 @@ func runCmd(args []string) error {
 	dockerImage := fs.String("docker-image", "ghcr.io/sipeed/picoclaw:latest", "docker image for prewarm pool")
 	dockerNamePrefix := fs.String("docker-name-prefix", "picoclaw-agent", "container name prefix for prewarm pool")
 	dockerInitCmd := fs.String("docker-init-cmd", "sleep infinity", "container init command when creating prewarm pool")
+	eventRetentionPerTask := fs.Int("event-retention-per-task", 2000, "max number of task events retained per task")
+	maxUserDataBytes := fs.Int64("max-user-data-bytes", 256<<20, "max total bytes per user's persisted workspace data")
+	maxUserDataFileBytes := fs.Int64("max-user-data-file-bytes", 32<<20, "max bytes per persisted user data file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	s, err := store.NewWithConfig(store.Config{
-		BaseDir: *sf.dataDir,
-		Driver:  *sf.dbDriver,
-		DSN:     *sf.dbDSN,
+		BaseDir:               *sf.dataDir,
+		Driver:                *sf.dbDriver,
+		DSN:                   *sf.dbDSN,
+		EventRetentionPerTask: *eventRetentionPerTask,
+		MaxUserDataBytes:      *maxUserDataBytes,
+		MaxUserDataFileBytes:  *maxUserDataFileBytes,
 	})
 	if err != nil {
 		return err
@@ -101,8 +112,9 @@ func runCmd(args []string) error {
 	defer s.Close()
 
 	workspaceManager, err := workspace.NewLocalManager(workspace.LocalManagerConfig{
-		Store:           s,
-		SharedSkillsDir: strings.TrimSpace(*sharedSkillsDir),
+		Store:            s,
+		SharedSkillsDir:  strings.TrimSpace(*sharedSkillsDir),
+		SharedSkillsMode: strings.TrimSpace(*sharedSkillsMode),
 	})
 	if err != nil {
 		return err
@@ -142,29 +154,38 @@ func runCmd(args []string) error {
 				Context:   *k8sContext,
 				Binary:    *k8sKubectl,
 			},
-			RemoteBaseDir: *k8sRemoteDir,
-			TaskCommand:   *k8sTaskCmd,
+			RemoteBaseDir:   *k8sRemoteDir,
+			TaskCommand:     *k8sTaskCmd,
+			SharedSkillsDir: sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
 		}
 	case "docker-picoclaw":
 		if strings.TrimSpace(*dockerTaskCmd) == "" {
 			return fmt.Errorf("docker-task-cmd is required for docker-picoclaw executor")
 		}
 		pool, err = pooladapter.NewDocker(pooladapter.DockerOptions{
-			Binary:        *dockerBin,
-			LabelSelector: *dockerLabelSelector,
-			ManagePool:    *dockerManagePool,
-			PoolSize:      *dockerPoolSize,
-			Image:         *dockerImage,
-			NamePrefix:    *dockerNamePrefix,
-			InitCmd:       *dockerInitCmd,
+			Binary:                   *dockerBin,
+			LabelSelector:            *dockerLabelSelector,
+			ManagePool:               *dockerManagePool,
+			PoolSize:                 *dockerPoolSize,
+			Image:                    *dockerImage,
+			NamePrefix:               *dockerNamePrefix,
+			InitCmd:                  *dockerInitCmd,
+			SharedSkillsHostDir:      strings.TrimSpace(*sharedSkillsDir),
+			SharedSkillsContainerDir: sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
+			WorkspaceHostDir:         workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
+			WorkspaceContainerDir:    workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
 		})
 		if err != nil {
 			return err
 		}
 		ex = &engine.DockerPicoclawExecutor{
-			Docker:        dockerutil.Docker{Binary: *dockerBin},
-			RemoteBaseDir: *dockerRemoteDir,
-			TaskCommand:   *dockerTaskCmd,
+			Docker:              dockerutil.Docker{Binary: *dockerBin},
+			RemoteBaseDir:       *dockerRemoteDir,
+			TaskCommand:         *dockerTaskCmd,
+			SharedSkillsDir:     sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
+			WorkspaceMode:       strings.TrimSpace(*workspaceMode),
+			RunDirHostBase:      workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
+			RunDirContainerBase: workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
 		}
 	default:
 		return fmt.Errorf("unknown executor mode: %s", *executorMode)
@@ -228,25 +249,18 @@ func taskSubmitCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		task, err := cli.SubmitTask(cloudclaw.SubmitTaskRequest{
+			UserID:     *userID,
+			TaskType:   *taskType,
+			Input:      *input,
+			MaxRetries: *maxRetries,
+		})
+		if err != nil {
+			return err
+		}
+		return printJSON(task)
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	task, err := cli.SubmitTask(cloudclaw.SubmitTaskRequest{
-		UserID:     *userID,
-		TaskType:   *taskType,
-		Input:      *input,
-		MaxRetries: *maxRetries,
-	})
-	if err != nil {
-		return err
-	}
-	return printJSON(task)
 }
 
 func taskStatusCmd(args []string) error {
@@ -259,20 +273,13 @@ func taskStatusCmd(args []string) error {
 	if *taskID == "" {
 		return fmt.Errorf("task-id is required")
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		task, err := cli.GetTask(*taskID)
+		if err != nil {
+			return err
+		}
+		return printJSON(task)
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	task, err := cli.GetTask(*taskID)
-	if err != nil {
-		return err
-	}
-	return printJSON(task)
 }
 
 func taskCancelCmd(args []string) error {
@@ -285,20 +292,13 @@ func taskCancelCmd(args []string) error {
 	if *taskID == "" {
 		return fmt.Errorf("task-id is required")
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		task, err := cli.CancelTask(*taskID)
+		if err != nil {
+			return err
+		}
+		return printJSON(task)
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	task, err := cli.CancelTask(*taskID)
-	if err != nil {
-		return err
-	}
-	return printJSON(task)
 }
 
 func queueLengthCmd(args []string) error {
@@ -307,20 +307,13 @@ func queueLengthCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		n, err := cli.QueueLength()
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{"queue_length": n})
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	n, err := cli.QueueLength()
-	if err != nil {
-		return err
-	}
-	return printJSON(map[string]any{"queue_length": n})
 }
 
 func containerStatusCmd(args []string) error {
@@ -329,20 +322,13 @@ func containerStatusCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		list, err := cli.ContainerStatus()
+		if err != nil {
+			return err
+		}
+		return printJSON(list)
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	list, err := cli.ContainerStatus()
-	if err != nil {
-		return err
-	}
-	return printJSON(list)
 }
 
 func auditCmd(args []string) error {
@@ -352,20 +338,13 @@ func auditCmd(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cli, err := cloudclaw.NewClient(cloudclaw.Config{
-		DataDir:  *sf.dataDir,
-		DBDriver: *sf.dbDriver,
-		DBDSN:    *sf.dbDSN,
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		events, err := cli.TaskEvents(*taskID)
+		if err != nil {
+			return err
+		}
+		return printJSON(events)
 	})
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-	events, err := cli.TaskEvents(*taskID)
-	if err != nil {
-		return err
-	}
-	return printJSON(events)
 }
 
 func printJSON(v any) error {
@@ -400,4 +379,46 @@ type portsPool interface {
 	Name() string
 	ContainerIDs(ctx context.Context) ([]string, error)
 	Reconcile(ctx context.Context) error
+}
+
+func withClient(sf commonStoreFlags, fn func(*cloudclaw.Client) error) error {
+	cli, err := cloudclaw.NewClient(cloudclaw.Config{
+		DataDir:  *sf.dataDir,
+		DBDriver: *sf.dbDriver,
+		DBDSN:    *sf.dbDSN,
+	})
+	if err != nil {
+		return err
+	}
+	defer cli.Close()
+	return fn(cli)
+}
+
+func sharedSkillsDirForExecutor(mode, mountPath string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "mount") {
+		return strings.TrimSpace(mountPath)
+	}
+	return ""
+}
+
+func workspaceHostDirForDocker(mode, dataDir string) string {
+	if !strings.EqualFold(strings.TrimSpace(mode), "mount") {
+		return ""
+	}
+	base := strings.TrimSpace(dataDir)
+	if base == "" {
+		base = "./data"
+	}
+	abs, err := filepath.Abs(base)
+	if err != nil {
+		return filepath.Join(base, "runs")
+	}
+	return filepath.Join(abs, "runs")
+}
+
+func workspaceContainerDirForDocker(mode, mountPath string) string {
+	if !strings.EqualFold(strings.TrimSpace(mode), "mount") {
+		return ""
+	}
+	return strings.TrimSpace(mountPath)
 }

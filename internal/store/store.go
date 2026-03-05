@@ -4,8 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -25,18 +26,24 @@ type SubmitTaskInput struct {
 }
 
 type Config struct {
-	BaseDir string
-	Driver  string // sqlite | postgres
-	DSN     string
+	BaseDir               string
+	Driver                string // sqlite | postgres
+	DSN                   string
+	EventRetentionPerTask int
+	MaxUserDataBytes      int64
+	MaxUserDataFileBytes  int64
 }
 
 type Store struct {
-	baseDir string
-	driver  string
-	sqlDrv  string
-	dsn     string
-	db      *sql.DB
-	dialect dialect
+	baseDir               string
+	driver                string
+	sqlDrv                string
+	dsn                   string
+	db                    *sql.DB
+	dialect               dialect
+	eventRetentionPerTask int
+	maxUserDataBytes      int64
+	maxUserDataFileBytes  int64
 }
 
 var idSeq atomic.Uint64
@@ -77,13 +84,20 @@ func NewWithConfig(cfg Config) (*Store, error) {
 		return nil, err
 	}
 	for _, p := range []string{
-		filepath.Join(cfg.BaseDir, "users"),
 		filepath.Join(cfg.BaseDir, "runs"),
-		filepath.Join(cfg.BaseDir, "snapshots"),
 	} {
 		if err := fsutil.EnsureDir(p); err != nil {
 			return nil, err
 		}
+	}
+	if cfg.EventRetentionPerTask <= 0 {
+		cfg.EventRetentionPerTask = 2000
+	}
+	if cfg.MaxUserDataBytes <= 0 {
+		cfg.MaxUserDataBytes = 256 << 20 // 256 MiB
+	}
+	if cfg.MaxUserDataFileBytes <= 0 {
+		cfg.MaxUserDataFileBytes = 32 << 20 // 32 MiB
 	}
 
 	var d dialect
@@ -122,12 +136,15 @@ func NewWithConfig(cfg Config) (*Store, error) {
 	}
 
 	s := &Store{
-		baseDir: cfg.BaseDir,
-		driver:  cfg.Driver,
-		sqlDrv:  sqlDriverName,
-		dsn:     dsn,
-		db:      db,
-		dialect: d,
+		baseDir:               cfg.BaseDir,
+		driver:                cfg.Driver,
+		sqlDrv:                sqlDriverName,
+		dsn:                   dsn,
+		db:                    db,
+		dialect:               d,
+		eventRetentionPerTask: cfg.EventRetentionPerTask,
+		maxUserDataBytes:      cfg.MaxUserDataBytes,
+		maxUserDataFileBytes:  cfg.MaxUserDataFileBytes,
 	}
 	if err := s.ensureSchema(); err != nil {
 		_ = db.Close()
@@ -157,6 +174,128 @@ func (s *Store) UserSnapshotBaseDir(userID string) string {
 
 func (s *Store) RunDir(taskID string, attempt int) string {
 	return filepath.Join(s.baseDir, "runs", fmt.Sprintf("%s-attempt-%d", taskID, attempt))
+}
+
+func (s *Store) ReplaceUserDataFromDir(userID, srcDir string) error {
+	userID, err := trimRequired(userID, "user id")
+	if err != nil {
+		return err
+	}
+	srcDir, err = trimRequired(srcDir, "source dir")
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(srcDir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source dir is not a directory: %s", srcDir)
+	}
+
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	if _, err := tx.Exec("DELETE FROM user_data_files WHERE user_id="+s.ph(1), userID); err != nil {
+		return err
+	}
+
+	var totalBytes int64
+	if err := filepath.WalkDir(srcDir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == srcDir || entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlink is not supported in user data: %s", path)
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if !isSafeRelativePath(rel) {
+			return fmt.Errorf("invalid user data path: %s", rel)
+		}
+		fileInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		size := fileInfo.Size()
+		if s.maxUserDataFileBytes > 0 && size > s.maxUserDataFileBytes {
+			return fmt.Errorf("user data file too large (%d > %d): %s", size, s.maxUserDataFileBytes, rel)
+		}
+		totalBytes += size
+		if s.maxUserDataBytes > 0 && totalBytes > s.maxUserDataBytes {
+			return fmt.Errorf("user data total size exceeded (%d > %d)", totalBytes, s.maxUserDataBytes)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			s.insertUserDataSQL(),
+			userID,
+			rel,
+			int64(fileInfo.Mode().Perm()),
+			b,
+			now,
+		)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) RestoreUserDataToDir(userID, dstDir string) error {
+	userID, err := trimRequired(userID, "user id")
+	if err != nil {
+		return err
+	}
+	dstDir, err = trimRequired(dstDir, "destination dir")
+	if err != nil {
+		return err
+	}
+	if err := fsutil.RemoveAndRecreate(dstDir); err != nil {
+		return err
+	}
+
+	rows, err := s.db.Query(s.selectUserDataSQL(), userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var relPath string
+		var mode int64
+		var content []byte
+		if err := rows.Scan(&relPath, &mode, &content); err != nil {
+			return err
+		}
+		if !isSafeRelativePath(relPath) {
+			return fmt.Errorf("invalid user data path in database: %s", relPath)
+		}
+		absPath := filepath.Join(dstDir, filepath.FromSlash(relPath))
+		if err := fsutil.EnsureDir(filepath.Dir(absPath)); err != nil {
+			return err
+		}
+		if err := os.WriteFile(absPath, content, fs.FileMode(mode)); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) SubmitTask(in SubmitTaskInput) (model.Task, error) {
@@ -228,6 +367,10 @@ INSERT INTO tasks (
 }
 
 func (s *Store) GetTask(taskID string) (model.Task, error) {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return model.Task{}, err
+	}
 	row := s.db.QueryRow(s.selectTaskByIDSQL(), taskID)
 	task, err := scanTask(row)
 	if err != nil {
@@ -240,10 +383,7 @@ func (s *Store) GetTask(taskID string) (model.Task, error) {
 }
 
 func (s *Store) QueueLength() (int, error) {
-	row := s.db.QueryRow("SELECT COUNT(1) FROM tasks WHERE status = ?", string(model.StatusQueued))
-	if s.driver == "postgres" {
-		row = s.db.QueryRow("SELECT COUNT(1) FROM tasks WHERE status = $1", string(model.StatusQueued))
-	}
+	row := s.db.QueryRow("SELECT COUNT(1) FROM tasks WHERE status = "+s.ph(1), string(model.StatusQueued))
 	var n int
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -252,6 +392,10 @@ func (s *Store) QueueLength() (int, error) {
 }
 
 func (s *Store) CancelTask(taskID string) (model.Task, error) {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return model.Task{}, err
+	}
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -299,6 +443,8 @@ func (s *Store) CancelTask(taskID string) (model.Task, error) {
 		}
 	case model.StatusSuccess, model.StatusFailed, model.StatusCanceled:
 		return model.Task{}, fmt.Errorf("task already terminal: %s", task.Status)
+	default:
+		return model.Task{}, fmt.Errorf("task %s has unsupported status %s", taskID, task.Status)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -308,6 +454,10 @@ func (s *Store) CancelTask(taskID string) (model.Task, error) {
 }
 
 func (s *Store) DequeueForRun(containerID string, leaseDuration time.Duration) (*model.Task, error) {
+	containerID, err := trimRequired(containerID, "container id")
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 	tx, err := s.db.Begin()
@@ -357,6 +507,14 @@ func (s *Store) DequeueForRun(containerID string, leaseDuration time.Duration) (
 }
 
 func (s *Store) Heartbeat(taskID, containerID string, leaseDuration time.Duration) error {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return err
+	}
+	containerID, err = trimRequired(containerID, "container id")
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	leaseUntil := now.Add(leaseDuration)
 	res, err := s.db.Exec(s.heartbeatSQL(), leaseUntil, now, now, taskID, string(model.StatusRunning), containerID)
@@ -374,6 +532,10 @@ func (s *Store) Heartbeat(taskID, containerID string, leaseDuration time.Duratio
 }
 
 func (s *Store) IsCancelRequested(taskID string) (bool, error) {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return false, err
+	}
 	row := s.db.QueryRow(s.cancelRequestedSQL(), taskID)
 	var b bool
 	if err := row.Scan(&b); err != nil {
@@ -386,6 +548,14 @@ func (s *Store) IsCancelRequested(taskID string) (bool, error) {
 }
 
 func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return err
+	}
+	containerID, err = trimRequired(containerID, "container id")
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -422,6 +592,15 @@ func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenU
 }
 
 func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return err
+	}
+	containerID, err = trimRequired(containerID, "container id")
+	if err != nil {
+		return err
+	}
+	reason = normalizeReason(reason, "task canceled")
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -455,6 +634,15 @@ func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
 }
 
 func (s *Store) MarkTaskRetryOrFail(taskID, containerID, reason string) error {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return err
+	}
+	containerID, err = trimRequired(containerID, "container id")
+	if err != nil {
+		return err
+	}
+	reason = normalizeReason(reason, "task execution failed")
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -556,6 +744,18 @@ func (s *Store) RecoverExpiredLeases() (int, error) {
 }
 
 func (s *Store) SaveSnapshot(userID, taskID, path string) (model.Snapshot, error) {
+	userID, err := trimRequired(userID, "user id")
+	if err != nil {
+		return model.Snapshot{}, err
+	}
+	taskID, err = trimRequired(taskID, "task id")
+	if err != nil {
+		return model.Snapshot{}, err
+	}
+	path, err = trimRequired(path, "snapshot path")
+	if err != nil {
+		return model.Snapshot{}, err
+	}
 	now := time.Now().UTC()
 	snap := model.Snapshot{
 		ID:        genID("snap"),
@@ -584,6 +784,15 @@ func (s *Store) LatestSnapshot(userID string) (model.Snapshot, bool, error) {
 }
 
 func (s *Store) SetContainerStatus(info model.ContainerInfo) error {
+	containerID, err := trimRequired(info.ID, "container id")
+	if err != nil {
+		return err
+	}
+	info.ID = containerID
+	info.State = strings.TrimSpace(info.State)
+	if info.State == "" {
+		return errors.New("container state is required")
+	}
 	if _, err := s.db.Exec(s.upsertContainerSQL(), info.ID, info.State, nullableString(info.TaskID), info.UpdatedAt); err != nil {
 		return err
 	}
@@ -612,14 +821,13 @@ func (s *Store) ListContainers() ([]model.ContainerInfo, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
 func (s *Store) ListEvents(taskID string) ([]model.TaskEvent, error) {
 	query := s.selectEventsSQL(false)
 	args := []any{}
-	if strings.TrimSpace(taskID) != "" {
+	if taskID = strings.TrimSpace(taskID); taskID != "" {
 		query = s.selectEventsSQL(true)
 		args = append(args, taskID)
 	}
@@ -690,6 +898,15 @@ func (s *Store) ensureSchema() error {
   path TEXT NOT NULL,
   created_at TIMESTAMP NOT NULL
 )`,
+		`CREATE TABLE IF NOT EXISTS user_data_files (
+  user_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  mode INTEGER NOT NULL,
+  content BLOB NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (user_id, path)
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_user_data_files_user ON user_data_files (user_id)`,
 		`CREATE TABLE IF NOT EXISTS task_events (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -719,8 +936,10 @@ func (s *Store) insertEventTx(tx *sql.Tx, evt model.TaskEvent) error {
 		"INSERT INTO task_events (id, task_id, from_status, to_status, reason, container_id, at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
 		s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7),
 	)
-	_, err := tx.Exec(query, evt.ID, evt.TaskID, nullableString(evt.FromStatus), evt.ToStatus, evt.Reason, nullableString(evt.ContainerID), evt.At)
-	return err
+	if _, err := tx.Exec(query, evt.ID, evt.TaskID, nullableString(evt.FromStatus), evt.ToStatus, evt.Reason, nullableString(evt.ContainerID), evt.At); err != nil {
+		return err
+	}
+	return s.pruneTaskEventsTx(tx, evt.TaskID)
 }
 
 func scanTask(scanner interface{ Scan(dest ...any) error }) (model.Task, error) {
@@ -817,6 +1036,44 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func trimRequired(v, field string) (string, error) {
+	out := strings.TrimSpace(v)
+	if out == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	return out, nil
+}
+
+func normalizeReason(reason, fallback string) string {
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+func isSafeRelativePath(rel string) bool {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return false
+	}
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." {
+		return false
+	}
+	if strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(clean, "/") {
+		return false
+	}
+	return true
+}
+
+func (s *Store) pruneTaskEventsTx(tx *sql.Tx, taskID string) error {
+	if s.eventRetentionPerTask <= 0 {
+		return nil
+	}
+	_, err := tx.Exec(s.pruneTaskEventsSQL(), taskID, s.eventRetentionPerTask)
+	return err
 }
 
 func (s *Store) ph(i int) string {
@@ -992,12 +1249,40 @@ DO UPDATE SET state=excluded.state, task_id=excluded.task_id, updated_at=exclude
 }
 
 func (s *Store) selectContainersSQL() string {
-	return `SELECT id, state, task_id, updated_at FROM containers`
+	return `SELECT id, state, task_id, updated_at FROM containers ORDER BY id ASC`
 }
 
 func (s *Store) selectEventsSQL(withTask bool) string {
 	if withTask {
-		return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events WHERE task_id=` + s.ph(1) + ` ORDER BY at ASC`
+		return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events WHERE task_id=` + s.ph(1) + ` ORDER BY at ASC, id ASC`
 	}
-	return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events ORDER BY at ASC`
+	return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events ORDER BY at ASC, id ASC`
+}
+
+func (s *Store) pruneTaskEventsSQL() string {
+	if s.driver == "postgres" {
+		return `DELETE FROM task_events
+WHERE id IN (
+  SELECT id FROM task_events
+  WHERE task_id=` + s.ph(1) + `
+  ORDER BY at DESC, id DESC
+  OFFSET ` + s.ph(2) + `
+)`
+	}
+	return `DELETE FROM task_events
+WHERE id IN (
+  SELECT id FROM task_events
+  WHERE task_id=` + s.ph(1) + `
+  ORDER BY at DESC, id DESC
+  LIMIT -1 OFFSET ` + s.ph(2) + `
+)`
+}
+
+func (s *Store) insertUserDataSQL() string {
+	return `INSERT INTO user_data_files (user_id, path, mode, content, updated_at)
+VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `)`
+}
+
+func (s *Store) selectUserDataSQL() string {
+	return `SELECT path, mode, content FROM user_data_files WHERE user_id=` + s.ph(1) + ` ORDER BY path ASC`
 }

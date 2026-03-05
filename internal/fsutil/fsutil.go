@@ -2,9 +2,12 @@ package fsutil
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func EnsureDir(path string) error {
@@ -19,13 +22,37 @@ func RemoveAndRecreate(path string) error {
 }
 
 func CopyDir(src, dst string) error {
-	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
+		return err
+	}
+	dstAbs, err := filepath.Abs(dst)
+	if err != nil {
+		return err
+	}
+	srcClean := filepath.Clean(srcAbs)
+	dstClean := filepath.Clean(dstAbs)
+	if srcClean == dstClean {
+		return nil
+	}
+	if isSubPath(srcClean, dstClean) {
+		return fmt.Errorf("destination %s cannot be inside source %s", dst, src)
+	}
+
+	srcInfo, err := os.Stat(src)
+	if errors.Is(err, os.ErrNotExist) {
 		return EnsureDir(dst)
+	}
+	if err != nil {
+		return err
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source is not a directory: %s", src)
 	}
 	if err := EnsureDir(dst); err != nil {
 		return err
 	}
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -34,8 +61,19 @@ func CopyDir(src, dst string) error {
 			return err
 		}
 		target := filepath.Join(dst, rel)
-		if info.IsDir() {
+		if entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
 			return os.MkdirAll(target, info.Mode())
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return copySymlink(path, target)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
 		}
 		return copyFile(path, target, info.Mode())
 	})
@@ -60,5 +98,30 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-	return out.Sync()
+	return nil
+}
+
+func copySymlink(src, dst string) error {
+	linkTarget, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	return os.Symlink(linkTarget, dst)
+}
+
+func isSubPath(parent, candidate string) bool {
+	rel, err := filepath.Rel(parent, candidate)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

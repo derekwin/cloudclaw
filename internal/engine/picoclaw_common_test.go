@@ -51,6 +51,7 @@ func TestRenderTaskCommandReplacesPlaceholders(t *testing.T) {
 		model.Task{ID: "t1", UserID: "u1", TaskType: "search", Input: "hello"},
 		"runner --task {{TASK_FILE}} --usage {{USAGE_FILE}} --dir {{USERDATA_DIR}}",
 		layout,
+		"",
 	)
 	if strings.Contains(cmd, "{{TASK_FILE}}") || strings.Contains(cmd, "{{USAGE_FILE}}") {
 		t.Fatalf("placeholders were not replaced: %s", cmd)

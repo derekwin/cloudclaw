@@ -75,13 +75,16 @@ func resolveUsage(workspaceDir string, task model.Task) model.TokenUsage {
 	}
 }
 
-func renderTaskCommand(task model.Task, taskCommand string, layout remoteTaskLayout) string {
+func renderTaskCommand(task model.Task, taskCommand string, layout remoteTaskLayout, sharedSkillsDir string) string {
 	replaced := strings.NewReplacer(
 		"{{TASK_DIR}}", layout.TaskDir,
 		"{{TASK_FILE}}", layout.TaskFile,
 		"{{USAGE_FILE}}", layout.UsageFile,
 		"{{USERDATA_DIR}}", layout.UserDataDir,
 	).Replace(taskCommand)
+	if strings.TrimSpace(sharedSkillsDir) == "" {
+		sharedSkillsDir = layout.UserDataDir + "/.cloudclaw_shared_skills"
+	}
 	envPrefix := []string{
 		"CLOUDCLAW_TASK_ID=" + shellQuote(task.ID),
 		"CLOUDCLAW_USER_ID=" + shellQuote(task.UserID),
@@ -89,7 +92,7 @@ func renderTaskCommand(task model.Task, taskCommand string, layout remoteTaskLay
 		"CLOUDCLAW_INPUT=" + shellQuote(task.Input),
 		"CLOUDCLAW_TASK_FILE=" + shellQuote(layout.TaskFile),
 		"CLOUDCLAW_WORKSPACE=" + shellQuote(layout.UserDataDir),
-		"CLOUDCLAW_SHARED_SKILLS_DIR=" + shellQuote(layout.UserDataDir+"/.cloudclaw_shared_skills"),
+		"CLOUDCLAW_SHARED_SKILLS_DIR=" + shellQuote(sharedSkillsDir),
 		"CLOUDCLAW_USAGE_FILE=" + shellQuote(layout.UsageFile),
 	}
 	return strings.Join(envPrefix, " ") + " " + replaced

@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type StaticPool struct {
@@ -13,8 +14,22 @@ func NewStatic(ids []string) (*StaticPool, error) {
 	if len(ids) == 0 {
 		return nil, fmt.Errorf("static pool requires at least one id")
 	}
-	cp := make([]string, len(ids))
-	copy(cp, ids)
+	seen := make(map[string]struct{}, len(ids))
+	cp := make([]string, 0, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cp = append(cp, id)
+	}
+	if len(cp) == 0 {
+		return nil, fmt.Errorf("static pool requires at least one non-empty id")
+	}
 	return &StaticPool{IDs: cp}, nil
 }
 

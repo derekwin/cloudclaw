@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -11,9 +12,13 @@ import (
 )
 
 type DockerPicoclawExecutor struct {
-	Docker        dockerutil.Docker
-	RemoteBaseDir string
-	TaskCommand   string
+	Docker              dockerutil.Docker
+	RemoteBaseDir       string
+	TaskCommand         string
+	SharedSkillsDir     string
+	WorkspaceMode       string // copy | mount
+	RunDirHostBase      string
+	RunDirContainerBase string
 }
 
 func (e *DockerPicoclawExecutor) Name() string {
@@ -27,13 +32,24 @@ func (e *DockerPicoclawExecutor) Execute(ctx context.Context, containerID string
 	if strings.TrimSpace(e.TaskCommand) == "" {
 		return model.TokenUsage{}, fmt.Errorf("docker task command is required")
 	}
-
-	layout := buildRemoteTaskLayout(e.RemoteBaseDir, task.ID)
-
 	payloadFile := filepath.Join(workspaceDir, "task.json")
 	if err := writeTaskPayload(payloadFile, task); err != nil {
 		return model.TokenUsage{}, err
 	}
+
+	if isWorkspaceModeMount(e.WorkspaceMode) {
+		layout, err := e.layoutForMountedWorkspace(workspaceDir)
+		if err != nil {
+			return model.TokenUsage{}, err
+		}
+		runnerCmd := e.renderCommand(task, layout)
+		if _, err := e.Docker.Exec(ctx, containerID, runnerCmd); err != nil {
+			return model.TokenUsage{}, err
+		}
+		return resolveUsage(workspaceDir, task), nil
+	}
+
+	layout := buildRemoteTaskLayout(e.RemoteBaseDir, task.ID)
 
 	prepareCmd := prepareRemoteUserDataCommand(layout.UserDataDir)
 	if _, err := e.Docker.Exec(ctx, containerID, prepareCmd); err != nil {
@@ -63,5 +79,43 @@ func (e *DockerPicoclawExecutor) Execute(ctx context.Context, containerID string
 }
 
 func (e *DockerPicoclawExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
-	return renderTaskCommand(task, e.TaskCommand, layout)
+	return renderTaskCommand(task, e.TaskCommand, layout, e.SharedSkillsDir)
+}
+
+func isWorkspaceModeMount(mode string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "mount")
+}
+
+func (e *DockerPicoclawExecutor) layoutForMountedWorkspace(workspaceDir string) (remoteTaskLayout, error) {
+	hostBase := strings.TrimSpace(e.RunDirHostBase)
+	containerBase := strings.TrimSpace(e.RunDirContainerBase)
+	if hostBase == "" || containerBase == "" {
+		return remoteTaskLayout{}, fmt.Errorf("run dir mount paths are required when workspace mode is mount")
+	}
+	absHostBase, err := filepath.Abs(hostBase)
+	if err != nil {
+		return remoteTaskLayout{}, err
+	}
+	absRunDir, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		return remoteTaskLayout{}, err
+	}
+	rel, err := filepath.Rel(absHostBase, absRunDir)
+	if err != nil {
+		return remoteTaskLayout{}, err
+	}
+	if rel == "." {
+		rel = ""
+	}
+	if rel == "" || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return remoteTaskLayout{}, fmt.Errorf("workspace %s is outside mounted host base %s", workspaceDir, hostBase)
+	}
+	relUnix := filepath.ToSlash(rel)
+	remoteRunDir := path.Clean(strings.TrimRight(containerBase, "/") + "/" + relUnix)
+	return remoteTaskLayout{
+		TaskDir:     remoteRunDir,
+		UserDataDir: remoteRunDir,
+		TaskFile:    remoteRunDir + "/task.json",
+		UsageFile:   remoteRunDir + "/usage.json",
+	}, nil
 }
