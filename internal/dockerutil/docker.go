@@ -4,11 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 type Docker struct {
 	Binary string
+}
+
+type EnsurePoolOptions struct {
+	Image      string
+	NamePrefix string
+	Label      string
+	PoolSize   int
+	InitCmd    string
 }
 
 func (d Docker) ListRunningContainers(ctx context.Context, labelSelector string) ([]string, error) {
@@ -50,6 +59,51 @@ func (d Docker) CopyFromContainer(ctx context.Context, container, srcPath, destP
 	return err
 }
 
+func (d Docker) EnsurePool(ctx context.Context, opts EnsurePoolOptions) ([]string, error) {
+	if strings.TrimSpace(opts.Image) == "" {
+		return nil, fmt.Errorf("docker pool image is required")
+	}
+	if strings.TrimSpace(opts.NamePrefix) == "" {
+		opts.NamePrefix = "picoclaw-agent"
+	}
+	if strings.TrimSpace(opts.Label) == "" {
+		opts.Label = "app=picoclaw-agent"
+	}
+	if opts.PoolSize <= 0 {
+		opts.PoolSize = 1
+	}
+	if strings.TrimSpace(opts.InitCmd) == "" {
+		opts.InitCmd = "sleep infinity"
+	}
+
+	out := make([]string, 0, opts.PoolSize)
+	for i := 1; i <= opts.PoolSize; i++ {
+		name := fmt.Sprintf("%s-%d", opts.NamePrefix, i)
+		running, exists, err := d.inspectContainer(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			args := []string{
+				"run", "-d",
+				"--name", name,
+				"--label", opts.Label,
+				opts.Image,
+				"sh", "-lc", opts.InitCmd,
+			}
+			if _, err := runCmd(ctx, d.binary(), args...); err != nil {
+				return nil, err
+			}
+		} else if !running {
+			if _, err := runCmd(ctx, d.binary(), "start", name); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
 func (d Docker) binary() string {
 	if strings.TrimSpace(d.Binary) != "" {
 		return d.Binary
@@ -68,6 +122,22 @@ func parseLabelSelector(selector string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func (d Docker) inspectContainer(ctx context.Context, name string) (running bool, exists bool, err error) {
+	out, err := runCmd(ctx, d.binary(), "inspect", "-f", "{{.State.Running}}", name)
+	if err != nil {
+		if strings.Contains(err.Error(), "No such object") {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	v := strings.TrimSpace(out)
+	parsed, parseErr := strconv.ParseBool(v)
+	if parseErr != nil {
+		return false, true, nil
+	}
+	return parsed, true, nil
 }
 
 func runCmd(ctx context.Context, bin string, args ...string) (string, error) {

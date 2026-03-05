@@ -43,6 +43,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, containerID string, task 
 		return model.TokenUsage{}, fmt.Errorf("executor command is empty")
 	}
 	usagePath := filepath.Join(workspaceDir, "usage.json")
+	sharedSkillsPath := filepath.Join(workspaceDir, ".cloudclaw_shared_skills")
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", e.Command)
 	cmd.Dir = workspaceDir
 	cmd.Env = append(os.Environ(),
@@ -51,6 +52,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, containerID string, task 
 		"CLOUDCLAW_TASK_TYPE="+task.TaskType,
 		"CLOUDCLAW_INPUT="+task.Input,
 		"CLOUDCLAW_WORKSPACE="+workspaceDir,
+		"CLOUDCLAW_SHARED_SKILLS_DIR="+sharedSkillsPath,
 		"CLOUDCLAW_CONTAINER_ID="+containerID,
 		"CLOUDCLAW_USAGE_FILE="+usagePath,
 	)
