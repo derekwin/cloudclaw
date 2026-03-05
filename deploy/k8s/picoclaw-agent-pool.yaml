@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: picoclaw-agent-pool
+  labels:
+    app: picoclaw-agent
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: picoclaw-agent
+  template:
+    metadata:
+      labels:
+        app: picoclaw-agent
+    spec:
+      containers:
+        - name: picoclaw-agent
+          image: ghcr.io/sipeed/picoclaw:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc", "sleep infinity"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
