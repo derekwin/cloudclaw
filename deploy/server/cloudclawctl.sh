@@ -36,6 +36,7 @@ FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-ghcr.io/sipeed/picoclaw:latest}"
 BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/picoclaw-runner:latest}"
 DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_picoclaw_task.sh}"
+DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
 PICO_MODEL_NAME="${PICO_MODEL_NAME:-default}"
@@ -214,6 +215,7 @@ start_cloudclaw() {
     --db-driver "$DB_DRIVER"
     --executor docker-picoclaw
     --docker-label-selector "$POOL_LABEL"
+    --docker-remote-dir "$DOCKER_REMOTE_DIR"
     --shared-skills-dir "$SHARED_DIR"
     --docker-task-cmd "$DOCKER_TASK_CMD"
   )
@@ -323,6 +325,7 @@ Environment overrides:
   PICO_REQUEST_TIMEOUT (default: 300)
   OPENROUTER_API_KEY / OPENROUTER_MODEL (legacy compatibility)
   DOCKER_TASK_CMD (default: run_picoclaw_task.sh)
+  DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
 
 Notes:
   cloudclaw task execution reads provider/model settings from PICO_* env vars.

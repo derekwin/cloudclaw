@@ -82,7 +82,7 @@ func runCmd(args []string) error {
 	k8sTaskCmd := fs.String("k8s-task-cmd", "", "task command executed inside selected pod; supports {{TASK_DIR}} {{TASK_FILE}} {{USAGE_FILE}} {{USERDATA_DIR}}")
 	dockerBin := fs.String("docker-bin", "docker", "docker binary path")
 	dockerLabelSelector := fs.String("docker-label-selector", "app=picoclaw-agent", "docker container label selector, supports comma separated key=value")
-	dockerRemoteDir := fs.String("docker-remote-dir", "/workspace/cloudclaw", "task workspace base directory inside container")
+	dockerRemoteDir := fs.String("docker-remote-dir", "/tmp/cloudclaw", "task workspace base directory inside container")
 	dockerTaskCmd := fs.String("docker-task-cmd", "", "task command executed inside selected container; supports {{TASK_DIR}} {{TASK_FILE}} {{USAGE_FILE}} {{USERDATA_DIR}}")
 	dockerManagePool := fs.Bool("docker-manage-pool", false, "whether cloudclaw should ensure docker prewarm pool")
 	dockerPoolSize := fs.Int("docker-pool-size", 3, "target container count when --docker-manage-pool=true")
