@@ -5,22 +5,9 @@ set -eu
 : "${CLOUDCLAW_INPUT:?missing CLOUDCLAW_INPUT}"
 : "${CLOUDCLAW_USAGE_FILE:?missing CLOUDCLAW_USAGE_FILE}"
 
-# Generic provider settings (preferred)
 PICO_MODEL_NAME="${PICO_MODEL_NAME:-default}"
-PICO_MODEL="${PICO_MODEL:-${OPENROUTER_MODEL:-openai/gpt-5.2}}"
-PICO_API_KEY="${PICO_API_KEY:-${OPENROUTER_API_KEY:-}}"
-PICO_API_BASE="${PICO_API_BASE:-}"
-PICO_REQUEST_TIMEOUT="${PICO_REQUEST_TIMEOUT:-300}"
-
-# Reasonable defaults for common local providers when api_base is not set.
-if [ -z "$PICO_API_BASE" ]; then
-  case "$PICO_MODEL" in
-    openrouter/*) PICO_API_BASE="https://openrouter.ai/api/v1" ;;
-    openai/*) PICO_API_BASE="https://api.openai.com/v1" ;;
-    ollama/*) PICO_API_BASE="http://host.docker.internal:11434/v1" ;;
-    vllm/*) PICO_API_BASE="http://host.docker.internal:8000/v1" ;;
-  esac
-fi
+PICOCLAW_HOME="${PICOCLAW_HOME:-/workspace/.picoclaw}"
+PICOCLAW_CONFIG="${PICOCLAW_CONFIG:-$PICOCLAW_HOME/config.json}"
 
 TASK_HOME="$(dirname "$CLOUDCLAW_WORKSPACE")"
 SHARED_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}"
@@ -45,37 +32,19 @@ if [ -n "$SHARED_DIR" ] && [ -d "$SHARED_WORKSPACE" ]; then
   fi
 fi
 
-# Build model entry dynamically.
-MODEL_ENTRY="\"model_name\": \"$PICO_MODEL_NAME\", \"model\": \"$PICO_MODEL\", \"request_timeout\": $PICO_REQUEST_TIMEOUT"
-if [ -n "$PICO_API_BASE" ]; then
-  MODEL_ENTRY="$MODEL_ENTRY, \"api_base\": \"$PICO_API_BASE\""
-fi
-if [ -n "$PICO_API_KEY" ]; then
-  MODEL_ENTRY="$MODEL_ENTRY, \"api_key\": \"$PICO_API_KEY\""
+if [ ! -s "$PICOCLAW_CONFIG" ]; then
+  echo "missing or empty picoclaw config: $PICOCLAW_CONFIG" >&2
+  exit 1
 fi
 
-cat > "$TASK_HOME/config.json" <<JSON
-{
-  "agents": {
-    "defaults": {
-      "workspace": "$CLOUDCLAW_WORKSPACE",
-      "model": "$PICO_MODEL_NAME",
-      "model_name": "$PICO_MODEL_NAME",
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
-    }
-  },
-  "model_list": [
-    {
-      $MODEL_ENTRY
-    }
-  ]
-}
-JSON
+model_name_re="$(printf '%s' "$PICO_MODEL_NAME" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
+if ! grep -Eq "\"model_name\"[[:space:]]*:[[:space:]]*\"$model_name_re\"" "$PICOCLAW_CONFIG"; then
+  echo "model \"$PICO_MODEL_NAME\" not found in $PICOCLAW_CONFIG" >&2
+  exit 1
+fi
 
-PICOCLAW_HOME="$TASK_HOME" \
-PICOCLAW_CONFIG="$TASK_HOME/config.json" \
+PICOCLAW_HOME="$PICOCLAW_HOME" \
+PICOCLAW_CONFIG="$PICOCLAW_CONFIG" \
 picoclaw agent --model "$PICO_MODEL_NAME" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
 
 prompt_chars=$(printf "%s" "$CLOUDCLAW_INPUT" | wc -c | tr -d ' ')
