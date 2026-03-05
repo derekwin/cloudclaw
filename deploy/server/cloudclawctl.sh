@@ -14,7 +14,9 @@ fi
 POOL_SIZE="${POOL_SIZE:-3}"
 POOL_LABEL="${POOL_LABEL:-app=picoclaw-agent}"
 POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-picoclaw-agent}"
-BASE_IMAGE="${BASE_IMAGE:-ghcr.io/sipeed/picoclaw:latest}"
+DEFAULT_BASE_IMAGE="ghcr.io/sipeed/picoclaw:latest"
+FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-docker.io/sipeed/picoclaw:latest}"
+BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/picoclaw-runner:latest}"
 DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_picoclaw_task.sh}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
@@ -41,6 +43,33 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 1; }
 }
 
+can_pull_image() {
+  local image="$1"
+  docker manifest inspect "$image" >/dev/null 2>&1
+}
+
+resolve_base_image() {
+  if can_pull_image "$BASE_IMAGE"; then
+    echo "$BASE_IMAGE"
+    return 0
+  fi
+
+  if [ "$BASE_IMAGE" = "$DEFAULT_BASE_IMAGE" ] && can_pull_image "$FALLBACK_BASE_IMAGE"; then
+    log "warning: cannot access $BASE_IMAGE, fallback to $FALLBACK_BASE_IMAGE"
+    echo "$FALLBACK_BASE_IMAGE"
+    return 0
+  fi
+
+  cat >&2 <<EOF
+cannot access base image: $BASE_IMAGE
+try one of:
+  1) docker login ghcr.io
+  2) BASE_IMAGE=<accessible-image> bash $0 up
+  3) if Docker Hub has it: BASE_IMAGE=$FALLBACK_BASE_IMAGE bash $0 up
+EOF
+  return 1
+}
+
 ensure_dirs() {
   mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
 }
@@ -58,9 +87,12 @@ install_all() {
   cp "$SCRIPT_DIR/templates/Dockerfile.runner" "$RUNNER_DIR/Dockerfile.runner"
   chmod +x "$RUNNER_DIR/run_picoclaw_task.sh"
 
+  resolved_base_image="$(resolve_base_image)"
+  log "using base image: $resolved_base_image"
+
   log "building runner image: $RUNNER_IMAGE"
   docker build \
-    --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+    --build-arg "BASE_IMAGE=$resolved_base_image" \
     -t "$RUNNER_IMAGE" \
     -f "$RUNNER_DIR/Dockerfile.runner" \
     "$RUNNER_DIR"
@@ -245,6 +277,7 @@ Environment overrides:
   POOL_LABEL (default: app=picoclaw-agent)
   POOL_NAME_PREFIX (default: picoclaw-agent)
   BASE_IMAGE (default: ghcr.io/sipeed/picoclaw:latest)
+  FALLBACK_BASE_IMAGE (default: docker.io/sipeed/picoclaw:latest)
   RUNNER_IMAGE (default: cloudclaw/picoclaw-runner:latest)
   PICO_MODEL_NAME (default: default)
   PICO_MODEL (default: openai/gpt-5.2)
