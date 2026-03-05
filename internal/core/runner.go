@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -92,34 +93,69 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) workerLoop(ctx context.Context, containerID string) {
-	ticker := time.NewTicker(r.cfg.PollInterval)
-	defer ticker.Stop()
+	defer func() {
+		_ = r.setContainer(containerID, "offline", "")
+	}()
 
 	for {
-		select {
-		case <-ctx.Done():
-			_ = r.setContainer(containerID, "offline", "")
+		if err := ctx.Err(); err != nil {
 			return
-		case <-ticker.C:
-			task, err := r.cfg.Store.DequeueForRun(containerID, r.cfg.LeaseDuration)
-			if err != nil {
-				r.cfg.Logger.Printf("dequeue error (%s): %v", containerID, err)
-				continue
-			}
-			if task == nil {
-				continue
-			}
-			_ = r.setContainer(containerID, "running", task.ID)
-			r.cfg.Logger.Printf("task %s assigned to %s (attempt=%d, runtime=%s)", task.ID, containerID, task.Attempts, r.cfg.Runtime.Name())
-			r.runTask(ctx, containerID, *task)
-			_ = r.setContainer(containerID, "idle", "")
 		}
+		task, err := r.cfg.Store.DequeueForRun(containerID, r.cfg.LeaseDuration)
+		if err != nil {
+			r.cfg.Logger.Printf("dequeue error (%s): %v", containerID, err)
+			if !sleepWithContext(ctx, r.cfg.PollInterval) {
+				return
+			}
+			continue
+		}
+		if task == nil {
+			if !sleepWithContext(ctx, r.cfg.PollInterval) {
+				return
+			}
+			continue
+		}
+		_ = r.setContainer(containerID, "running", task.ID)
+		r.cfg.Logger.Printf("task %s assigned to %s (attempt=%d, runtime=%s)", task.ID, containerID, task.Attempts, r.cfg.Runtime.Name())
+		r.runTask(ctx, containerID, *task)
+		_ = r.setContainer(containerID, "idle", "")
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
 func (r *Runner) runTask(ctx context.Context, containerID string, task model.Task) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	var heartbeatErr struct {
+		sync.Mutex
+		err error
+	}
+	setHeartbeatErr := func(err error) {
+		if err == nil {
+			return
+		}
+		heartbeatErr.Lock()
+		if heartbeatErr.err == nil {
+			heartbeatErr.err = err
+		}
+		heartbeatErr.Unlock()
+	}
+	getHeartbeatErr := func() error {
+		heartbeatErr.Lock()
+		defer heartbeatErr.Unlock()
+		return heartbeatErr.err
+	}
 
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -132,11 +168,17 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 				return
 			case <-ticker.C:
 				if err := r.cfg.Store.Heartbeat(task.ID, containerID, r.cfg.LeaseDuration); err != nil {
+					setHeartbeatErr(fmt.Errorf("heartbeat failed: %w", err))
 					cancel()
 					return
 				}
 				cancelRequested, err := r.cfg.Store.IsCancelRequested(task.ID)
-				if err == nil && cancelRequested {
+				if err != nil {
+					setHeartbeatErr(fmt.Errorf("check cancel request failed: %w", err))
+					cancel()
+					return
+				}
+				if cancelRequested {
 					cancel()
 					return
 				}
@@ -151,12 +193,28 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 		<-heartbeatDone
 		return
 	}
+	defer func() {
+		if err := os.RemoveAll(runDir); err != nil {
+			r.cfg.Logger.Printf("cleanup run dir failed (%s): %v", runDir, err)
+		}
+	}()
 
 	usage, execErr := r.cfg.Runtime.Execute(runCtx, containerID, task, runDir)
 	cancel()
 	<-heartbeatDone
 
-	cancelRequested, _ := r.cfg.Store.IsCancelRequested(task.ID)
+	hbErr := getHeartbeatErr()
+	cancelRequested, cancelCheckErr := r.cfg.Store.IsCancelRequested(task.ID)
+	if cancelCheckErr != nil {
+		r.cfg.Logger.Printf("check cancel request failed for task %s: %v", task.ID, cancelCheckErr)
+		if execErr == nil && hbErr == nil {
+			execErr = fmt.Errorf("check cancel state after execution failed: %w", cancelCheckErr)
+		}
+	}
+	if hbErr != nil && (execErr == nil || errors.Is(execErr, context.Canceled)) {
+		execErr = hbErr
+	}
+
 	if execErr == nil && !cancelRequested {
 		if err := r.cfg.Workspace.Persist(task, runDir); err != nil {
 			execErr = fmt.Errorf("persist user data failed: %w", err)
@@ -174,7 +232,7 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 
 	if execErr != nil {
 		reason := execErr.Error()
-		if runCtx.Err() == context.Canceled {
+		if errors.Is(execErr, context.Canceled) && hbErr == nil {
 			reason = "runner interrupted"
 		}
 		if err := r.cfg.Store.MarkTaskRetryOrFail(task.ID, containerID, reason); err != nil {

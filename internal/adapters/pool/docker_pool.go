@@ -9,13 +9,17 @@ import (
 )
 
 type DockerOptions struct {
-	Binary        string
-	LabelSelector string
-	ManagePool    bool
-	PoolSize      int
-	Image         string
-	NamePrefix    string
-	InitCmd       string
+	Binary                   string
+	LabelSelector            string
+	ManagePool               bool
+	PoolSize                 int
+	Image                    string
+	NamePrefix               string
+	InitCmd                  string
+	SharedSkillsHostDir      string
+	SharedSkillsContainerDir string
+	WorkspaceHostDir         string
+	WorkspaceContainerDir    string
 }
 
 type DockerPool struct {
@@ -66,11 +70,15 @@ func (p *DockerPool) Docker() dockerutil.Docker {
 func (p *DockerPool) resolve(ctx context.Context) ([]string, error) {
 	if p.opts.ManagePool {
 		return p.docker.EnsurePool(ctx, dockerutil.EnsurePoolOptions{
-			Image:      p.opts.Image,
-			NamePrefix: p.opts.NamePrefix,
-			Label:      p.opts.LabelSelector,
-			PoolSize:   p.opts.PoolSize,
-			InitCmd:    p.opts.InitCmd,
+			Image:                    p.opts.Image,
+			NamePrefix:               p.opts.NamePrefix,
+			Label:                    p.opts.LabelSelector,
+			PoolSize:                 p.opts.PoolSize,
+			InitCmd:                  p.opts.InitCmd,
+			SharedSkillsHostDir:      p.opts.SharedSkillsHostDir,
+			SharedSkillsContainerDir: p.opts.SharedSkillsContainerDir,
+			WorkspaceHostDir:         p.opts.WorkspaceHostDir,
+			WorkspaceContainerDir:    p.opts.WorkspaceContainerDir,
 		})
 	}
 	return p.docker.ListRunningContainers(ctx, p.opts.LabelSelector)

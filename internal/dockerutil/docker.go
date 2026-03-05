@@ -13,11 +13,15 @@ type Docker struct {
 }
 
 type EnsurePoolOptions struct {
-	Image      string
-	NamePrefix string
-	Label      string
-	PoolSize   int
-	InitCmd    string
+	Image                    string
+	NamePrefix               string
+	Label                    string
+	PoolSize                 int
+	InitCmd                  string
+	SharedSkillsHostDir      string
+	SharedSkillsContainerDir string
+	WorkspaceHostDir         string
+	WorkspaceContainerDir    string
 }
 
 func (d Docker) ListRunningContainers(ctx context.Context, labelSelector string) ([]string, error) {
@@ -83,18 +87,23 @@ func (d Docker) EnsurePool(ctx context.Context, opts EnsurePoolOptions) ([]strin
 		if err != nil {
 			return nil, err
 		}
-			if !exists {
-				args := []string{
-					"run", "-d",
-					"--name", name,
-					"--label", opts.Label,
-					"--entrypoint", "/bin/sh",
-					opts.Image,
-					"-lc", opts.InitCmd,
-				}
-				if _, err := runCmd(ctx, d.binary(), args...); err != nil {
-					return nil, err
-				}
+		if !exists {
+			args := []string{
+				"run", "-d",
+				"--name", name,
+				"--label", opts.Label,
+				"--entrypoint", "/bin/sh",
+			}
+			if strings.TrimSpace(opts.SharedSkillsHostDir) != "" && strings.TrimSpace(opts.SharedSkillsContainerDir) != "" {
+				args = append(args, "-v", fmt.Sprintf("%s:%s:ro", opts.SharedSkillsHostDir, opts.SharedSkillsContainerDir))
+			}
+			if strings.TrimSpace(opts.WorkspaceHostDir) != "" && strings.TrimSpace(opts.WorkspaceContainerDir) != "" {
+				args = append(args, "-v", fmt.Sprintf("%s:%s", opts.WorkspaceHostDir, opts.WorkspaceContainerDir))
+			}
+			args = append(args, opts.Image, "-lc", opts.InitCmd)
+			if _, err := runCmd(ctx, d.binary(), args...); err != nil {
+				return nil, err
+			}
 		} else if !running {
 			if _, err := runCmd(ctx, d.binary(), "start", name); err != nil {
 				return nil, err
@@ -136,7 +145,7 @@ func (d Docker) inspectContainer(ctx context.Context, name string) (running bool
 	v := strings.TrimSpace(out)
 	parsed, parseErr := strconv.ParseBool(v)
 	if parseErr != nil {
-		return false, true, nil
+		return false, true, fmt.Errorf("unexpected running state %q for container %s", v, name)
 	}
 	return parsed, true, nil
 }

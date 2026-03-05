@@ -6,6 +6,7 @@ CloudClaw 用于把任务调度到 picoclaw 容器执行，并处理重试恢复
 
 ```bash
 cd /Users/jacelau/code/opencode/cloudclaw
+bash deploy/server/cloudclawctl.sh init-config
 bash deploy/server/cloudclawctl.sh up
 bash deploy/server/cloudclawctl.sh smoke
 bash deploy/server/cloudclawctl.sh status

@@ -11,9 +11,10 @@ import (
 )
 
 type K8sPicoclawExecutor struct {
-	Kubectl       k8sutil.Kubectl
-	RemoteBaseDir string
-	TaskCommand   string
+	Kubectl         k8sutil.Kubectl
+	RemoteBaseDir   string
+	TaskCommand     string
+	SharedSkillsDir string
 }
 
 func (e *K8sPicoclawExecutor) Name() string {
@@ -63,5 +64,5 @@ func (e *K8sPicoclawExecutor) Execute(ctx context.Context, containerID string, t
 }
 
 func (e *K8sPicoclawExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
-	return renderTaskCommand(task, e.TaskCommand, layout)
+	return renderTaskCommand(task, e.TaskCommand, layout, e.SharedSkillsDir)
 }
