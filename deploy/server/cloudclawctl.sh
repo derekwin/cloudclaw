@@ -3,12 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CC_HOME_FILE="${CC_HOME_FILE:-$REPO_ROOT/.cloudclaw-home}"
+CC_HOME_FILE="${CC_HOME_FILE:-$REPO_ROOT/cloudclaw_data-home}"
 
 resolve_home_path() {
   local raw="$1"
   if [ -z "$raw" ]; then
-    raw=".cloudclaw"
+    raw="cloudclaw_data"
   fi
   case "$raw" in
     "~") raw="$HOME" ;;
@@ -26,7 +26,7 @@ elif [ -f "$CC_HOME_FILE" ]; then
   saved_home="$(head -n 1 "$CC_HOME_FILE" | tr -d '\r')"
   CC_HOME="$(resolve_home_path "$saved_home")"
 else
-  CC_HOME="$(resolve_home_path ".cloudclaw")"
+  CC_HOME="$(resolve_home_path "cloudclaw_data")"
 fi
 POOL_SIZE="${POOL_SIZE:-3}"
 POOL_LABEL="${POOL_LABEL:-app=picoclaw-agent}"
@@ -408,8 +408,8 @@ Commands:
   down         stop + stop-pool
 
 Environment overrides:
-  CC_HOME (default: repo-relative ./.cloudclaw unless overridden)
-  CC_HOME_FILE (default: $REPO_ROOT/.cloudclaw-home, stores persisted CC_HOME)
+  CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
+  CC_HOME_FILE (default: $REPO_ROOT/cloudclaw_data-home, stores persisted CC_HOME)
   POOL_SIZE (default: 3)
   POOL_LABEL (default: app=picoclaw-agent)
   POOL_NAME_PREFIX (default: picoclaw-agent)
