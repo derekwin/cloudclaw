@@ -54,6 +54,7 @@ bash deploy/server/cloudclawctl.sh up
 ```
 
 说明：容器已带 `--add-host host.docker.internal:host-gateway`，可访问宿主机服务。
+默认任务运行目录在容器内为 `/tmp/cloudclaw`（可用 `DOCKER_REMOTE_DIR` 覆盖），避免 `/workspace` 权限问题。
 
 ## 变更环境变量后要做什么
 
