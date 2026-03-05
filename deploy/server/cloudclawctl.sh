@@ -44,12 +44,16 @@ PICO_MODEL="${PICO_MODEL:-${OPENROUTER_MODEL:-openai/gpt-5.2}}"
 PICO_API_BASE="${PICO_API_BASE:-}"
 PICO_API_KEY="${PICO_API_KEY:-${OPENROUTER_API_KEY:-}}"
 PICO_REQUEST_TIMEOUT="${PICO_REQUEST_TIMEOUT:-300}"
+PICOCLAW_CONFIG_SOURCE="${PICOCLAW_CONFIG_SOURCE:-}"
+PICOCLAW_CONFIG_MOUNT_PATH="${PICOCLAW_CONFIG_MOUNT_PATH:-/workspace/.picoclaw}"
 OWNER_UID="${PICOCLAW_OWNER_UID:-${SUDO_UID:-$(id -u)}}"
 OWNER_GID="${PICOCLAW_OWNER_GID:-${SUDO_GID:-$(id -g)}}"
 
 CLOUDCLAW_BIN="$CC_HOME/bin/cloudclaw"
 RUNNER_DIR="$CC_HOME/runner"
 SHARED_DIR="$CC_HOME/shared"
+SHARED_PICO_DIR="$SHARED_DIR/picoclaw"
+SHARED_PICO_CONFIG="$SHARED_PICO_DIR/config.json"
 DATA_DIR="$CC_HOME/data"
 LOG_DIR="$CC_HOME/logs"
 RUN_DIR="$CC_HOME/run"
@@ -104,7 +108,63 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_PICO_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
+}
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+render_managed_picoclaw_config() {
+  local model_name_esc model_esc api_base_esc api_key_esc
+  local api_base_json="" api_key_json=""
+  model_name_esc="$(json_escape "$PICO_MODEL_NAME")"
+  model_esc="$(json_escape "$PICO_MODEL")"
+  if [ -n "${PICO_API_BASE:-}" ]; then
+    api_base_esc="$(json_escape "$PICO_API_BASE")"
+    api_base_json=",\n      \"api_base\": \"${api_base_esc}\""
+  fi
+  if [ -n "${PICO_API_KEY:-}" ]; then
+    api_key_esc="$(json_escape "$PICO_API_KEY")"
+    api_key_json=",\n      \"api_key\": \"${api_key_esc}\""
+  fi
+
+  cat > "$SHARED_PICO_CONFIG.tmp" <<EOF
+{
+  "agents": {
+    "defaults": {
+      "model_name": "${model_name_esc}",
+      "workspace": "./workspace",
+      "max_tokens": 8192,
+      "temperature": 0.7,
+      "max_tool_iterations": 20
+    }
+  },
+  "model_list": [
+    {
+      "model_name": "${model_name_esc}",
+      "model": "${model_esc}",
+      "request_timeout": ${PICO_REQUEST_TIMEOUT}${api_base_json}${api_key_json}
+    }
+  ]
+}
+EOF
+  mv -f "$SHARED_PICO_CONFIG.tmp" "$SHARED_PICO_CONFIG"
+}
+
+prepare_picoclaw_config() {
+  ensure_dirs
+  if [ -n "${PICOCLAW_CONFIG_SOURCE:-}" ]; then
+    if [ ! -f "$PICOCLAW_CONFIG_SOURCE" ]; then
+      echo "PICOCLAW_CONFIG_SOURCE not found: $PICOCLAW_CONFIG_SOURCE" >&2
+      exit 1
+    fi
+    cp "$PICOCLAW_CONFIG_SOURCE" "$SHARED_PICO_CONFIG"
+    log "using external picoclaw config: $PICOCLAW_CONFIG_SOURCE"
+  else
+    render_managed_picoclaw_config
+    log "generated managed picoclaw config: $SHARED_PICO_CONFIG"
+  fi
 }
 
 install_all() {
@@ -136,6 +196,7 @@ install_all() {
 start_pool() {
   ensure_runner_image
   ensure_dirs
+  prepare_picoclaw_config
 
   if [ -z "${PICO_API_KEY:-}" ]; then
     case "$PICO_MODEL" in
@@ -146,15 +207,9 @@ start_pool() {
 
   for i in $(seq 1 "$POOL_SIZE"); do
     name="${POOL_NAME_PREFIX}-${i}"
-    if docker ps --format '{{.Names}}' | grep -Fxq "$name"; then
-      log "container already running: $name"
-      continue
-    fi
-
     if docker ps -a --format '{{.Names}}' | grep -Fxq "$name"; then
-      log "starting existing container: $name"
-      docker start "$name" >/dev/null
-      continue
+      log "recreating container to refresh mounted config/env: $name"
+      docker rm -f "$name" >/dev/null
     fi
 
     log "creating container: $name"
@@ -162,6 +217,8 @@ start_pool() {
       "-e" "PICO_MODEL_NAME=${PICO_MODEL_NAME}"
       "-e" "PICO_MODEL=${PICO_MODEL}"
       "-e" "PICO_REQUEST_TIMEOUT=${PICO_REQUEST_TIMEOUT}"
+      "-e" "PICOCLAW_HOME=${PICOCLAW_CONFIG_MOUNT_PATH}"
+      "-e" "PICOCLAW_CONFIG=${PICOCLAW_CONFIG_MOUNT_PATH}/config.json"
     )
     if [ -n "${PICO_API_BASE:-}" ]; then
       env_args+=("-e" "PICO_API_BASE=${PICO_API_BASE}")
@@ -177,6 +234,7 @@ start_pool() {
       --add-host host.docker.internal:host-gateway \
       --user "${OWNER_UID}:${OWNER_GID}" \
       --entrypoint /bin/sh \
+      -v "${SHARED_PICO_DIR}:${PICOCLAW_CONFIG_MOUNT_PATH}:ro" \
       "${env_args[@]}" \
       "$RUNNER_IMAGE" \
       -lc 'sleep infinity' >/dev/null
@@ -323,12 +381,15 @@ Environment overrides:
   PICO_API_BASE (optional; auto default for openai/openrouter/ollama/vllm)
   PICO_API_KEY (optional for ollama/vllm local, usually required for cloud providers)
   PICO_REQUEST_TIMEOUT (default: 300)
+  PICOCLAW_CONFIG_SOURCE (optional; use existing config.json as source of truth)
+  PICOCLAW_CONFIG_MOUNT_PATH (default: /workspace/.picoclaw in container)
   OPENROUTER_API_KEY / OPENROUTER_MODEL (legacy compatibility)
   DOCKER_TASK_CMD (default: run_picoclaw_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
 
 Notes:
-  cloudclaw task execution reads provider/model settings from PICO_* env vars.
+  pool startup always refreshes containers to avoid stale config/env drift.
+  cloudclaw task execution reads model/provider settings from mounted picoclaw config.
 USAGE
 }
 
