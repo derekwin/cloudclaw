@@ -8,15 +8,17 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
 
+	pooladapter "cloudclaw/internal/adapters/pool"
+	"cloudclaw/internal/core"
 	"cloudclaw/internal/dockerutil"
 	"cloudclaw/internal/engine"
 	"cloudclaw/internal/k8sutil"
 	"cloudclaw/internal/store"
+	"cloudclaw/internal/workspace"
 	"cloudclaw/pkg/cloudclaw"
 )
 
@@ -98,38 +100,48 @@ func runCmd(args []string) error {
 	}
 	defer s.Close()
 
+	workspaceManager, err := workspace.NewLocalManager(workspace.LocalManagerConfig{
+		Store:           s,
+		SharedSkillsDir: strings.TrimSpace(*sharedSkillsDir),
+	})
+	if err != nil {
+		return err
+	}
+
 	var ex engine.Executor
-	containerIDs := []string{}
-	var poolReconciler func(context.Context) error
+	var pool portsPool
 	switch *executorMode {
 	case "mock":
 		ex = &engine.MockExecutor{}
-		containerIDs = syntheticContainerIDs(*poolSize)
+		pool, err = pooladapter.NewStatic(syntheticContainerIDs(*poolSize))
+		if err != nil {
+			return err
+		}
 	case "cmd":
 		ex = &engine.CommandExecutor{Command: *execCmd}
-		containerIDs = syntheticContainerIDs(*poolSize)
+		pool, err = pooladapter.NewStatic(syntheticContainerIDs(*poolSize))
+		if err != nil {
+			return err
+		}
 	case "k8s-picoclaw":
 		if strings.TrimSpace(*k8sTaskCmd) == "" {
 			return fmt.Errorf("k8s-task-cmd is required for k8s-picoclaw executor")
 		}
-		kube := k8sutil.Kubectl{
-			Namespace: *k8sNamespace,
-			Context:   *k8sContext,
-			Binary:    *k8sKubectl,
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		pods, err := kube.ListRunningPods(ctx, *k8sLabelSelector)
+		pool, err = pooladapter.NewK8s(pooladapter.K8sOptions{
+			Namespace:     *k8sNamespace,
+			Context:       *k8sContext,
+			KubectlBinary: *k8sKubectl,
+			LabelSelector: *k8sLabelSelector,
+		})
 		if err != nil {
 			return err
 		}
-		if len(pods) == 0 {
-			return fmt.Errorf("no running pods found for selector %q in namespace %q", *k8sLabelSelector, *k8sNamespace)
-		}
-		sort.Strings(pods)
-		containerIDs = pods
 		ex = &engine.K8sPicoclawExecutor{
-			Kubectl:       kube,
+			Kubectl: k8sutil.Kubectl{
+				Namespace: *k8sNamespace,
+				Context:   *k8sContext,
+				Binary:    *k8sKubectl,
+			},
 			RemoteBaseDir: *k8sRemoteDir,
 			TaskCommand:   *k8sTaskCmd,
 		}
@@ -137,54 +149,32 @@ func runCmd(args []string) error {
 		if strings.TrimSpace(*dockerTaskCmd) == "" {
 			return fmt.Errorf("docker-task-cmd is required for docker-picoclaw executor")
 		}
-		dk := dockerutil.Docker{Binary: *dockerBin}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		containers, err := resolveDockerContainers(ctx, dk, dockerResolveOptions{
+		pool, err = pooladapter.NewDocker(pooladapter.DockerOptions{
+			Binary:        *dockerBin,
+			LabelSelector: *dockerLabelSelector,
 			ManagePool:    *dockerManagePool,
 			PoolSize:      *dockerPoolSize,
 			Image:         *dockerImage,
 			NamePrefix:    *dockerNamePrefix,
-			LabelSelector: *dockerLabelSelector,
 			InitCmd:       *dockerInitCmd,
 		})
 		if err != nil {
 			return err
 		}
-		if len(containers) == 0 {
-			return fmt.Errorf("no running containers found for selector %q", *dockerLabelSelector)
-		}
-		sort.Strings(containers)
-		containerIDs = containers
 		ex = &engine.DockerPicoclawExecutor{
-			Docker:        dk,
+			Docker:        dockerutil.Docker{Binary: *dockerBin},
 			RemoteBaseDir: *dockerRemoteDir,
 			TaskCommand:   *dockerTaskCmd,
-		}
-		if *dockerManagePool {
-			poolReconciler = func(ctx context.Context) error {
-				_, err := resolveDockerContainers(ctx, dk, dockerResolveOptions{
-					ManagePool:    true,
-					PoolSize:      *dockerPoolSize,
-					Image:         *dockerImage,
-					NamePrefix:    *dockerNamePrefix,
-					LabelSelector: *dockerLabelSelector,
-					InitCmd:       *dockerInitCmd,
-				})
-				return err
-			}
 		}
 	default:
 		return fmt.Errorf("unknown executor mode: %s", *executorMode)
 	}
 
-	r, err := engine.NewRunner(engine.RunnerConfig{
+	r, err := core.NewRunner(core.RunnerConfig{
 		Store:             s,
-		Executor:          ex,
-		PoolSize:          len(containerIDs),
-		ContainerIDs:      containerIDs,
-		SharedSkillsDir:   strings.TrimSpace(*sharedSkillsDir),
-		ReconcilePool:     poolReconciler,
+		Runtime:           ex,
+		Workspace:         workspaceManager,
+		Pool:              pool,
 		PollInterval:      *poll,
 		LeaseDuration:     *lease,
 		HeartbeatInterval: *heartbeat,
@@ -196,7 +186,7 @@ func runCmd(args []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	log.Printf("cloudclaw runner started data_dir=%s db_driver=%s pool_size=%d executor=%s", *sf.dataDir, *sf.dbDriver, len(containerIDs), *executorMode)
+	log.Printf("cloudclaw runner started data_dir=%s db_driver=%s executor=%s pool=%s", *sf.dataDir, *sf.dbDriver, ex.Name(), pool.Name())
 	return r.Run(ctx)
 }
 
@@ -406,24 +396,8 @@ func bindCommonStoreFlags(fs *flag.FlagSet) commonStoreFlags {
 	}
 }
 
-type dockerResolveOptions struct {
-	ManagePool    bool
-	PoolSize      int
-	Image         string
-	NamePrefix    string
-	LabelSelector string
-	InitCmd       string
-}
-
-func resolveDockerContainers(ctx context.Context, dk dockerutil.Docker, opts dockerResolveOptions) ([]string, error) {
-	if opts.ManagePool {
-		return dk.EnsurePool(ctx, dockerutil.EnsurePoolOptions{
-			Image:      opts.Image,
-			NamePrefix: opts.NamePrefix,
-			Label:      opts.LabelSelector,
-			PoolSize:   opts.PoolSize,
-			InitCmd:    opts.InitCmd,
-		})
-	}
-	return dk.ListRunningContainers(ctx, opts.LabelSelector)
+type portsPool interface {
+	Name() string
+	ContainerIDs(ctx context.Context) ([]string, error)
+	Reconcile(ctx context.Context) error
 }

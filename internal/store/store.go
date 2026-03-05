@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -37,6 +38,8 @@ type Store struct {
 	db      *sql.DB
 	dialect dialect
 }
+
+var idSeq atomic.Uint64
 
 type dialect interface {
 	placeholder(i int) string
@@ -157,11 +160,20 @@ func (s *Store) RunDir(taskID string, attempt int) string {
 }
 
 func (s *Store) SubmitTask(in SubmitTaskInput) (model.Task, error) {
+	userID := strings.TrimSpace(in.UserID)
+	if userID == "" {
+		return model.Task{}, errors.New("user id is required")
+	}
+	taskType := strings.TrimSpace(in.TaskType)
+	if taskType == "" {
+		return model.Task{}, errors.New("task type is required")
+	}
+
 	now := time.Now().UTC()
 	task := model.Task{
 		ID:         genID("tsk"),
-		UserID:     in.UserID,
-		TaskType:   in.TaskType,
+		UserID:     userID,
+		TaskType:   taskType,
 		Input:      in.Input,
 		Priority:   1,
 		Status:     model.StatusQueued,
@@ -797,7 +809,7 @@ func rollback(tx *sql.Tx) {
 }
 
 func genID(prefix string) string {
-	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
+	return fmt.Sprintf("%s_%d_%d", prefix, time.Now().UTC().UnixNano(), idSeq.Add(1))
 }
 
 func max(a, b int) int {
