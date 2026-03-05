@@ -45,14 +45,11 @@ PICO_API_KEY="${PICO_API_KEY:-${OPENROUTER_API_KEY:-}}"
 PICO_REQUEST_TIMEOUT="${PICO_REQUEST_TIMEOUT:-300}"
 OWNER_UID="${PICOCLAW_OWNER_UID:-${SUDO_UID:-$(id -u)}}"
 OWNER_GID="${PICOCLAW_OWNER_GID:-${SUDO_GID:-$(id -g)}}"
-PICOCLAW_CONTAINER_HOME="${PICOCLAW_CONTAINER_HOME:-/tmp}"
 
 CLOUDCLAW_BIN="$CC_HOME/bin/cloudclaw"
 RUNNER_DIR="$CC_HOME/runner"
 SHARED_DIR="$CC_HOME/shared"
 DATA_DIR="$CC_HOME/data"
-PICOCLAW_HOME_DIR="${PICOCLAW_HOME_DIR:-$CC_HOME/picoclaw}"
-PICOCLAW_CONFIG_FILE="$PICOCLAW_HOME_DIR/config.json"
 LOG_DIR="$CC_HOME/logs"
 RUN_DIR="$CC_HOME/run"
 PID_FILE="$RUN_DIR/cloudclaw.pid"
@@ -106,101 +103,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$DATA_DIR" "$PICOCLAW_HOME_DIR" "$LOG_DIR" "$RUN_DIR"
-}
-
-fix_picoclaw_permissions() {
-  need_cmd docker
-  ensure_dirs
-  docker run --rm \
-    --entrypoint /bin/sh \
-    --user 0:0 \
-    -v "$PICOCLAW_HOME_DIR:/root/.picoclaw" \
-    "$RUNNER_IMAGE" \
-    -lc "chown -R ${OWNER_UID}:${OWNER_GID} /root/.picoclaw 2>/dev/null || true; chmod -R u+rwX /root/.picoclaw 2>/dev/null || true" >/dev/null
-}
-
-picoclaw_config_needs_edit() {
-  if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
-    return 0
-  fi
-  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
-    return 0
-  fi
-  if grep -Eq 'YOUR_API_KEY(_HERE)?' "$PICOCLAW_CONFIG_FILE"; then
-    return 0
-  fi
-  if grep -Eq '"api_key"[[:space:]]*:[[:space:]]*""' "$PICOCLAW_CONFIG_FILE"; then
-    return 0
-  fi
-  return 1
-}
-
-init_picoclaw_config() {
-  ensure_runner_image
-  ensure_dirs
-  if [ -f "$PICOCLAW_CONFIG_FILE" ]; then
-    log "picoclaw config already exists: $PICOCLAW_CONFIG_FILE"
-    fix_picoclaw_permissions
-    return 0
-  fi
-
-  log "initializing picoclaw data at $PICOCLAW_HOME_DIR"
-  docker run --rm \
-    --entrypoint /bin/sh \
-    --user "${OWNER_UID}:${OWNER_GID}" \
-    -e "HOME=$PICOCLAW_CONTAINER_HOME" \
-    -v "$PICOCLAW_HOME_DIR:$PICOCLAW_CONTAINER_HOME/.picoclaw" \
-    "$RUNNER_IMAGE" \
-    -lc 'picoclaw onboard >/dev/null 2>&1 || true; test -f "$HOME/.picoclaw/config.json"'
-
-  fix_picoclaw_permissions
-
-  if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
-    echo "failed to initialize picoclaw config file" >&2
-    return 1
-  fi
-
-  cat <<EOF
-[cloudclawctl] picoclaw config initialized:
-  $PICOCLAW_CONFIG_FILE
-
-Please edit this file (set provider/model/api_key), then run:
-  bash $0 up
-EOF
-  return 2
-}
-
-require_picoclaw_config_ready() {
-  if [ ! -f "$PICOCLAW_CONFIG_FILE" ]; then
-    init_picoclaw_config
-    return $?
-  fi
-  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
-    log "picoclaw config is not readable, attempting to fix permissions"
-    fix_picoclaw_permissions
-  fi
-  if [ ! -r "$PICOCLAW_CONFIG_FILE" ]; then
-    cat <<EOF
-[cloudclawctl] picoclaw config is not readable:
-  $PICOCLAW_CONFIG_FILE
-
-Please fix permissions (or remove and re-init), then run:
-  bash $0 up
-EOF
-    return 2
-  fi
-  if picoclaw_config_needs_edit; then
-    cat <<EOF
-[cloudclawctl] picoclaw config needs provider/api_key setup:
-  $PICOCLAW_CONFIG_FILE
-
-Please finish the config, then run:
-  bash $0 up
-EOF
-    return 2
-  fi
-  return 0
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
 }
 
 install_all() {
@@ -232,12 +135,11 @@ install_all() {
 start_pool() {
   ensure_runner_image
   ensure_dirs
-  require_picoclaw_config_ready
 
   if [ -z "${PICO_API_KEY:-}" ]; then
     case "$PICO_MODEL" in
       ollama/*|vllm/*) ;;
-      *) log "warning: PICO_API_KEY is empty for model=$PICO_MODEL; provider may reject requests" ;;
+      *) log "warning: PICO_API_KEY is empty for model=$PICO_MODEL; set PICO_* env vars before up if you use cloud providers" ;;
     esac
   fi
 
@@ -273,8 +175,6 @@ start_pool() {
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
       --user "${OWNER_UID}:${OWNER_GID}" \
-      -e "HOME=$PICOCLAW_CONTAINER_HOME" \
-      -v "$PICOCLAW_HOME_DIR:$PICOCLAW_CONTAINER_HOME/.picoclaw" \
       --entrypoint /bin/sh \
       "${env_args[@]}" \
       "$RUNNER_IMAGE" \
@@ -397,7 +297,6 @@ Usage: $0 <command>
 Commands:
   install      Build cloudclaw binary + build picoclaw runner image
   set-home     Persist cloudclaw home directory (absolute or repo-relative)
-  init-config  Initialize picoclaw config data directory
   start-pool   Start docker picoclaw pool
   stop-pool    Stop/remove docker picoclaw pool
   start        Start cloudclaw runner daemon
@@ -416,9 +315,7 @@ Environment overrides:
   BASE_IMAGE (default: docker.io/sipeed/picoclaw:latest)
   FALLBACK_BASE_IMAGE (default: ghcr.io/sipeed/picoclaw:latest)
   RUNNER_IMAGE (default: cloudclaw/picoclaw-runner:latest)
-  PICOCLAW_HOME_DIR (default: \$CC_HOME/picoclaw)
-  PICOCLAW_CONTAINER_HOME (default: /tmp)
-  PICOCLAW_OWNER_UID / PICOCLAW_OWNER_GID (optional owner for picoclaw data files)
+  PICOCLAW_OWNER_UID / PICOCLAW_OWNER_GID (optional container user id)
   PICO_MODEL_NAME (default: default)
   PICO_MODEL (default: openai/gpt-5.2)
   PICO_API_BASE (optional; auto default for openai/openrouter/ollama/vllm)
@@ -426,6 +323,9 @@ Environment overrides:
   PICO_REQUEST_TIMEOUT (default: 300)
   OPENROUTER_API_KEY / OPENROUTER_MODEL (legacy compatibility)
   DOCKER_TASK_CMD (default: run_picoclaw_task.sh)
+
+Notes:
+  cloudclaw task execution reads provider/model settings from PICO_* env vars.
 USAGE
 }
 
@@ -445,16 +345,6 @@ case "$cmd" in
     resolved="$(resolve_home_path "$arg1")"
     mkdir -p "$resolved"
     log "saved CC_HOME path: $arg1 (resolved: $resolved)"
-    ;;
-  init-config)
-    if init_picoclaw_config; then
-      :
-    else
-      rc=$?
-      if [ "$rc" -ne 2 ]; then
-        exit "$rc"
-      fi
-    fi
     ;;
   start-pool)
     start_pool

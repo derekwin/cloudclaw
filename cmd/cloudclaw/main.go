@@ -64,7 +64,6 @@ func main() {
 func runCmd(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	sf := bindCommonStoreFlags(fs)
-	poolSize := fs.Int("pool-size", 2, "container pool size")
 	poll := fs.Duration("poll", 1*time.Second, "queue polling interval")
 	lease := fs.Duration("lease", 30*time.Second, "task lease duration")
 	heartbeat := fs.Duration("heartbeat", 5*time.Second, "task heartbeat interval")
@@ -74,8 +73,7 @@ func runCmd(args []string) error {
 	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker-picoclaw only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
-	executorMode := fs.String("executor", "mock", "executor mode: mock|cmd|k8s-picoclaw|docker-picoclaw")
-	execCmd := fs.String("exec-cmd", "", "executor command when --executor=cmd")
+	executorMode := fs.String("executor", "docker-picoclaw", "executor mode: k8s-picoclaw|docker-picoclaw")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for picoclaw pods")
 	k8sContext := fs.String("k8s-context", "", "optional kubernetes context")
 	k8sLabelSelector := fs.String("k8s-label-selector", "app=picoclaw-agent", "label selector for picoclaw pods")
@@ -123,18 +121,6 @@ func runCmd(args []string) error {
 	var ex engine.Executor
 	var pool portsPool
 	switch *executorMode {
-	case "mock":
-		ex = &engine.MockExecutor{}
-		pool, err = pooladapter.NewStatic(syntheticContainerIDs(*poolSize))
-		if err != nil {
-			return err
-		}
-	case "cmd":
-		ex = &engine.CommandExecutor{Command: *execCmd}
-		pool, err = pooladapter.NewStatic(syntheticContainerIDs(*poolSize))
-		if err != nil {
-			return err
-		}
 	case "k8s-picoclaw":
 		if strings.TrimSpace(*k8sTaskCmd) == "" {
 			return fmt.Errorf("k8s-task-cmd is required for k8s-picoclaw executor")
@@ -209,17 +195,6 @@ func runCmd(args []string) error {
 	defer cancel()
 	log.Printf("cloudclaw runner started data_dir=%s db_driver=%s executor=%s pool=%s", *sf.dataDir, *sf.dbDriver, ex.Name(), pool.Name())
 	return r.Run(ctx)
-}
-
-func syntheticContainerIDs(poolSize int) []string {
-	if poolSize <= 0 {
-		poolSize = 1
-	}
-	ids := make([]string, poolSize)
-	for i := 0; i < poolSize; i++ {
-		ids[i] = fmt.Sprintf("container-%02d", i+1)
-	}
-	return ids
 }
 
 func taskCmd(args []string) error {
@@ -355,7 +330,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor mock|cmd|k8s-picoclaw|docker-picoclaw]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-picoclaw|docker-picoclaw]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
