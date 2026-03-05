@@ -11,7 +11,7 @@ class CloudClawError(RuntimeError):
 @dataclass
 class Client:
     binary: str = "cloudclaw"
-    data_dir: str = "./data"
+    data_dir: str = "./cloudclaw_data/data"
     db_driver: str = "sqlite"
     db_dsn: str = ""
 

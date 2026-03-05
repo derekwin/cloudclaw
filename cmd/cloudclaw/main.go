@@ -355,17 +355,17 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-  cloudclaw run [--data-dir ./data --db-driver sqlite --executor mock|cmd|k8s-picoclaw|docker-picoclaw]
-  cloudclaw task submit --user-id u1 --task-type search --input "..."
-  cloudclaw task status --task-id tsk_xxx
-  cloudclaw task cancel --task-id tsk_xxx
-  cloudclaw queue-length
-  cloudclaw container-status
-  cloudclaw audit [--task-id tsk_xxx]`)
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor mock|cmd|k8s-picoclaw|docker-picoclaw]
+	  cloudclaw task submit --user-id u1 --task-type search --input "..."
+	  cloudclaw task status --task-id tsk_xxx
+	  cloudclaw task cancel --task-id tsk_xxx
+	  cloudclaw queue-length
+	  cloudclaw container-status
+	  cloudclaw audit [--task-id tsk_xxx]`)
 }
 
 func bindCommonStoreFlags(fs *flag.FlagSet) commonStoreFlags {
-	dataDir := fs.String("data-dir", "./data", "cloudclaw data directory")
+	dataDir := fs.String("data-dir", "./cloudclaw_data/data", "cloudclaw data directory")
 	dbDriver := fs.String("db-driver", "sqlite", "database driver: sqlite|postgres")
 	dbDSN := fs.String("db-dsn", "", "database dsn; sqlite default is <data-dir>/cloudclaw.db")
 	return commonStoreFlags{
@@ -407,7 +407,7 @@ func workspaceHostDirForDocker(mode, dataDir string) string {
 	}
 	base := strings.TrimSpace(dataDir)
 	if base == "" {
-		base = "./data"
+		base = "./cloudclaw_data/data"
 	}
 	abs, err := filepath.Abs(base)
 	if err != nil {

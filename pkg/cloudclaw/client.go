@@ -20,7 +20,7 @@ type Config struct {
 
 func NewClient(cfg Config) (*Client, error) {
 	if cfg.DataDir == "" {
-		cfg.DataDir = "./data"
+		cfg.DataDir = "./cloudclaw_data/data"
 	}
 	if cfg.DBDriver == "" {
 		cfg.DBDriver = "sqlite"
