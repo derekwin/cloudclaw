@@ -44,3 +44,13 @@ bash deploy/server/cloudclawctl.sh result dequeue 20
 # 停止
 bash deploy/server/cloudclawctl.sh down
 ```
+
+## 安全部署建议
+
+- 容器默认启用基础硬化：
+  - `CONTAINER_HARDEN=1`（默认）启用 `no-new-privileges`、`cap-drop=ALL`、`pids-limit`
+- 可选进一步收敛：
+  - `CONTAINER_READONLY_ROOTFS=1` 开启只读根文件系统（自动挂载 `/tmp`、`/var/tmp` tmpfs）
+- 目录挂载策略：
+  - `./cloudclaw_data/shared/opencode` 挂载到容器 `~/.config/opencode`（只读）
+  - `./cloudclaw_data/user-runtime/<user>/opencode` 映射为容器 `~/.local/share/opencode`（用户私有，可写）

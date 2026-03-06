@@ -51,6 +51,9 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
+CONTAINER_HARDEN="${CONTAINER_HARDEN:-1}"
+CONTAINER_PIDS_LIMIT="${CONTAINER_PIDS_LIMIT:-512}"
+CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -554,6 +557,7 @@ start_pool() {
 
     log "creating container: $name"
     env_args=()
+    harden_args=()
     if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
@@ -587,6 +591,20 @@ start_pool() {
         env_args+=("-e" "CLAUDECODE_TIMEOUT_SECONDS=${CLAUDECODE_TIMEOUT_SECONDS}")
       fi
     fi
+    if [ "$CONTAINER_HARDEN" = "1" ]; then
+      harden_args+=(
+        "--security-opt" "no-new-privileges:true"
+        "--cap-drop" "ALL"
+        "--pids-limit" "$CONTAINER_PIDS_LIMIT"
+      )
+    fi
+    if [ "$CONTAINER_READONLY_ROOTFS" = "1" ]; then
+      harden_args+=(
+        "--read-only"
+        "--tmpfs" "/tmp:rw,noexec,nosuid,nodev,size=256m"
+        "--tmpfs" "/var/tmp:rw,noexec,nosuid,nodev,size=128m"
+      )
+    fi
 
     docker run -d \
       --name "$name" \
@@ -594,6 +612,7 @@ start_pool() {
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
       --user "${OWNER_UID}:${OWNER_GID}" \
+      "${harden_args[@]}" \
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
       -v "${USER_RUNTIME_DIR}:${USER_RUNTIME_MOUNT_PATH}" \
@@ -733,7 +752,12 @@ status_all() {
 
   status_pool
   echo "  runtime: $RUNTIME_NAME"
-  echo "  config: $RUNTIME_CONFIG_FILE"
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    echo "  config_dir: $RUNTIME_CONFIG_DIR"
+    echo "  config_file: $RUNTIME_CONFIG_FILE"
+  else
+    echo "  config: $RUNTIME_CONFIG_FILE"
+  fi
 }
 
 smoke() {
@@ -822,6 +846,9 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
+  CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
+  CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
+  CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
