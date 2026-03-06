@@ -339,6 +339,76 @@ func TestReplaceUserDataRejectsOversizedTotal(t *testing.T) {
 	}
 }
 
+func TestPruneOpencodeRuntimeArtifacts(t *testing.T) {
+	s := newTestStore(t)
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+
+	write := func(rel, content string) {
+		abs := filepath.Join(src, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	write(".opencode-home/.local/share/opencode/auth.json", "auth")
+	write(".opencode-home/.local/share/opencode/opencode.db", "db")
+	write(".opencode-home/.local/share/opencode/opencode.db-shm", "shm")
+	write(".opencode-home/.local/share/opencode/opencode.db-wal", "wal")
+	write(".opencode-home/.local/share/opencode/bin/cache", "bin")
+	write(".opencode-home/.local/share/opencode/log/1.log", "log")
+	write(".opencode-home/.local/share/opencode/snapshot/a", "snapshot")
+	write(".opencode-home/.local/share/opencode/storage/a", "storage")
+	write(".opencode-home/.local/share/opencode/tool-output/a", "tool")
+	write("workspace.txt", "ok")
+
+	if err := s.ReplaceUserDataFromDir("u1", src); err != nil {
+		t.Fatalf("replace user data: %v", err)
+	}
+
+	deleted, err := s.PruneOpencodeRuntimeArtifacts()
+	if err != nil {
+		t.Fatalf("prune opencode artifacts: %v", err)
+	}
+	if deleted == 0 {
+		t.Fatal("expected deleted rows > 0")
+	}
+
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := s.RestoreUserDataToDir("u1", dst); err != nil {
+		t.Fatalf("restore user data: %v", err)
+	}
+
+	for _, removed := range []string{
+		".opencode-home/.local/share/opencode/opencode.db-shm",
+		".opencode-home/.local/share/opencode/opencode.db-wal",
+		".opencode-home/.local/share/opencode/bin/cache",
+		".opencode-home/.local/share/opencode/log/1.log",
+		".opencode-home/.local/share/opencode/snapshot/a",
+		".opencode-home/.local/share/opencode/storage/a",
+		".opencode-home/.local/share/opencode/tool-output/a",
+	} {
+		if _, err := os.Stat(filepath.Join(dst, filepath.FromSlash(removed))); err == nil {
+			t.Fatalf("expected %s removed", removed)
+		}
+	}
+
+	for _, kept := range []string{
+		".opencode-home/.local/share/opencode/auth.json",
+		".opencode-home/.local/share/opencode/opencode.db",
+		"workspace.txt",
+	} {
+		if _, err := os.Stat(filepath.Join(dst, filepath.FromSlash(kept))); err != nil {
+			t.Fatalf("expected %s kept, err=%v", kept, err)
+		}
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	d := t.TempDir()

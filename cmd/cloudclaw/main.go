@@ -49,6 +49,8 @@ func main() {
 		err = runCmd(os.Args[2:])
 	case "task":
 		err = taskCmd(os.Args[2:])
+	case "user-data":
+		err = userDataCmd(os.Args[2:])
 	case "queue-length":
 		err = queueLengthCmd(os.Args[2:])
 	case "container-status":
@@ -78,6 +80,7 @@ func runCmd(args []string) error {
 	sharedSkillsDir := fs.String("shared-skills-dir", "", "global shared skills directory injected into each task workspace")
 	sharedSkillsMode := fs.String("shared-skills-mode", "copy", "shared skills mode: copy|mount")
 	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
+	workspaceStateMode := fs.String("workspace-state-mode", "db", "workspace state mode: db|ephemeral (none as alias)")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
 	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
@@ -124,6 +127,7 @@ func runCmd(args []string) error {
 		Store:            s,
 		SharedSkillsDir:  strings.TrimSpace(*sharedSkillsDir),
 		SharedSkillsMode: strings.TrimSpace(*sharedSkillsMode),
+		WorkspaceState:   strings.TrimSpace(*workspaceStateMode),
 	})
 	if err != nil {
 		return err
@@ -343,6 +347,35 @@ func auditCmd(args []string) error {
 	})
 }
 
+func userDataCmd(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: cloudclaw user-data <prune-opencode-runtime>")
+	}
+	switch args[0] {
+	case "prune-opencode-runtime":
+		return userDataPruneOpencodeRuntimeCmd(args[1:])
+	default:
+		return fmt.Errorf("unknown user-data command: %s", args[0])
+	}
+}
+
+func userDataPruneOpencodeRuntimeCmd(args []string) error {
+	fs := flag.NewFlagSet("user-data prune-opencode-runtime", flag.ContinueOnError)
+	sf := bindCommonStoreFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withStore(sf, func(s *store.Store) error {
+		deleted, err := s.PruneOpencodeRuntimeArtifacts()
+		if err != nil {
+			return err
+		}
+		return printJSON(map[string]any{
+			"deleted_rows": deleted,
+		})
+	})
+}
+
 func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -355,6 +388,7 @@ func usage() {
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
+	  cloudclaw user-data prune-opencode-runtime
 	  cloudclaw queue-length
 	  cloudclaw container-status
 	  cloudclaw audit [--task-id tsk_xxx]`)
@@ -388,6 +422,19 @@ func withClient(sf commonStoreFlags, fn func(*cloudclaw.Client) error) error {
 	}
 	defer cli.Close()
 	return fn(cli)
+}
+
+func withStore(sf commonStoreFlags, fn func(*store.Store) error) error {
+	s, err := store.NewWithConfig(store.Config{
+		BaseDir: *sf.dataDir,
+		Driver:  *sf.dbDriver,
+		DSN:     *sf.dbDSN,
+	})
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return fn(s)
 }
 
 func sharedSkillsDirForExecutor(mode, mountPath string) string {

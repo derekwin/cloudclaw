@@ -51,8 +51,8 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
-OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$HOME/.config/opencode/opencode.json}"
-OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.opencode}"
+OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$CC_HOME/opencode/config/opencode.json}"
+OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/root/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
 OWNER_GID="${AGENT_OWNER_GID:-${OPENCODE_OWNER_GID:-${SUDO_GID:-$(id -g)}}}"
@@ -63,6 +63,8 @@ SHARED_DIR="$CC_HOME/shared"
 SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
 SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
 DATA_DIR="$CC_HOME/data"
+USER_RUNTIME_DIR="$CC_HOME/user-runtime"
+USER_RUNTIME_MOUNT_PATH="${USER_RUNTIME_MOUNT_PATH:-/workspace/cloudclaw/user-runtime}"
 LOG_DIR="$CC_HOME/logs"
 RUN_DIR="$CC_HOME/run"
 PID_FILE="$RUN_DIR/cloudclaw.pid"
@@ -199,7 +201,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$DATA_DIR" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
 }
 
 ensure_runtime_config_ready() {
@@ -215,9 +217,6 @@ ensure_runtime_config_for_up() {
   ensure_dirs
   if [ -s "$RUNTIME_CONFIG_FILE" ]; then
     return
-  fi
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
-    die "missing opencode config: $RUNTIME_CONFIG_FILE (install opencode and maintain this file, or set OPENCODE_CONFIG_FILE)"
   fi
   log "config not found, generating full template (same as: AGENT_RUNTIME=$RUNTIME_NAME $0 init)"
   init_full_config
@@ -397,7 +396,7 @@ edit_config_hint() {
 opencode config path:
   $RUNTIME_CONFIG_FILE
 
-This should be your official opencode config file managed by administrators.
+CloudClaw maintains this config under CC_HOME by default.
 
 Edit this file to configure sections like:
   - model / provider
@@ -485,7 +484,11 @@ start_pool() {
       env_args+=(
         "-e" "OPENCODE_CONFIG=$(runtime_config_mount_file)"
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
+        "-e" "CLOUDCLAW_USER_RUNTIME_HOME_BASE=${USER_RUNTIME_MOUNT_PATH}"
       )
+      if [ -n "${OPENCODE_PERSIST_MODE:-}" ]; then
+        env_args+=("-e" "OPENCODE_PERSIST_MODE=${OPENCODE_PERSIST_MODE}")
+      fi
     else
       env_args+=(
         "-e" "CLAUDECODE_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
@@ -520,6 +523,7 @@ start_pool() {
       --user "${OWNER_UID}:${OWNER_GID}" \
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
+      -v "${USER_RUNTIME_DIR}:${USER_RUNTIME_MOUNT_PATH}" \
       "${env_args[@]}" \
       "$RUNNER_IMAGE" \
       -lc 'sleep infinity' >/dev/null
@@ -566,11 +570,21 @@ start_cloudclaw() {
   fi
 
   log "starting cloudclaw runner"
+  workspace_state_mode="${WORKSPACE_STATE_MODE:-}"
+  if [ -z "$workspace_state_mode" ]; then
+    if [ "$RUNTIME_NAME" = "opencode" ]; then
+      workspace_state_mode="ephemeral"
+    else
+      workspace_state_mode="db"
+    fi
+  fi
+
   cmd=(
     "$CLOUDCLAW_BIN" run
     --data-dir "$DATA_DIR"
     --db-driver "$DB_DRIVER"
     --executor "$RUNTIME_EXECUTOR"
+    --workspace-state-mode "$workspace_state_mode"
     --docker-label-selector "$POOL_LABEL"
     --docker-remote-dir "$DOCKER_REMOTE_DIR"
     --shared-skills-dir "$SHARED_DIR"
@@ -584,6 +598,23 @@ start_cloudclaw() {
   nohup "${cmd[@]}" >"$LOG_DIR/cloudclaw.log" 2>&1 &
   echo "$!" > "$PID_FILE"
   log "cloudclaw started (pid=$!, log=$LOG_DIR/cloudclaw.log)"
+}
+
+prune_opencode_userdata() {
+  ensure_dirs
+  if [ ! -x "$CLOUDCLAW_BIN" ]; then
+    die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
+  fi
+
+  cmd=(
+    "$CLOUDCLAW_BIN" user-data prune-opencode-runtime
+    --data-dir "$DATA_DIR"
+    --db-driver "$DB_DRIVER"
+  )
+  if [ -n "$DB_DSN" ]; then
+    cmd+=(--db-dsn "$DB_DSN")
+  fi
+  "${cmd[@]}"
 }
 
 stop_cloudclaw() {
@@ -676,6 +707,7 @@ Usage:
 Groups:
   home   set <path> | show
   config path | show | edit | import <file> | reset | init-full | help
+  db     prune-opencode-runtime
   pool   start | stop | restart | status
   runner start | stop | restart | status | logs [lines]
 
@@ -691,6 +723,7 @@ Shortcuts:
 
 Legacy aliases (compatible):
   set-home <path>, config-path, show-config, config-help
+  prune-opencode-runtime
   start-pool, stop-pool, start, stop
 
 Examples:
@@ -711,8 +744,11 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
-  OPENCODE_CONFIG_FILE (default: ~/.config/opencode/opencode.json)
-  OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.opencode)
+  OPENCODE_CONFIG_FILE (default: <CC_HOME>/opencode/config/opencode.json)
+  OPENCODE_CONFIG_MOUNT_PATH (default: /root/.config/opencode)
+  USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
+  OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
+  WORKSPACE_STATE_MODE (optional: db|ephemeral; default: opencode=ephemeral, claudecode=db)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
   DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_claudecode_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
@@ -722,8 +758,7 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
-  "up" auto-runs init only for claudecode when runtime config does not exist.
-  opencode runtime expects OPENCODE_CONFIG_FILE to already exist.
+  "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.
 USAGE
@@ -780,6 +815,14 @@ cmd_pool() {
   esac
 }
 
+cmd_db() {
+  local action="${1:-}"
+  case "$action" in
+    prune-opencode-runtime) prune_opencode_userdata ;;
+    *) die "unknown db action: $action (use: prune-opencode-runtime)" ;;
+  esac
+}
+
 cmd_runner() {
   local action="${1:-status}"
   local arg="${2:-}"
@@ -827,6 +870,7 @@ cmd_shortcut() {
       edit_config_hint
       print_runtime_config_paths
       ;;
+    prune-opencode-runtime) prune_opencode_userdata ;;
     start-pool) start_pool ;;
     stop-pool) stop_pool ;;
     start) start_cloudclaw ;;
@@ -844,6 +888,7 @@ main() {
   case "$group" in
     home) cmd_home "$action" "$arg" ;;
     config) cmd_config "$action" "$arg" ;;
+    db) cmd_db "$action" ;;
     pool) cmd_pool "$action" ;;
     runner) cmd_runner "$action" "$arg" ;;
     *) cmd_shortcut "$group" "$action" "$arg" ;;
