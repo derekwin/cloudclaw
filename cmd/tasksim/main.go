@@ -98,7 +98,7 @@ func main() {
 					if item.Usage != nil {
 						usageTotal = item.Usage.TotalTokens
 					}
-					log.Printf("result received: task_id=%s user=%s status=%s usage_total=%d output_len=%d", item.TaskID, job.userID, item.Status, usageTotal, len(item.Output))
+					log.Printf("result received: task_id=%s user=%s status=%s container=%s usage_total=%d output_len=%d", item.TaskID, job.userID, item.Status, item.ContainerID, usageTotal, len(item.Output))
 				}
 				if len(completed) >= total {
 					mu.Unlock()

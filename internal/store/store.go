@@ -630,12 +630,13 @@ func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenU
 	}
 
 	if err := s.insertEventTx(tx, model.TaskEvent{
-		ID:         genID("evt"),
-		TaskID:     taskID,
-		FromStatus: string(model.StatusRunning),
-		ToStatus:   string(model.StatusSuccess),
-		Reason:     "task completed",
-		At:         now,
+		ID:          genID("evt"),
+		TaskID:      taskID,
+		FromStatus:  string(model.StatusRunning),
+		ToStatus:    string(model.StatusSuccess),
+		Reason:      "task completed",
+		ContainerID: containerID,
+		At:          now,
 	}); err != nil {
 		return err
 	}
@@ -644,6 +645,7 @@ func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenU
 		TaskID:       taskID,
 		UserID:       task.UserID,
 		TaskType:     task.TaskType,
+		ContainerID:  containerID,
 		Status:       model.StatusSuccess,
 		ErrorMessage: "",
 		Output:       output,
@@ -699,12 +701,13 @@ func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
 	}
 
 	if err := s.insertEventTx(tx, model.TaskEvent{
-		ID:         genID("evt"),
-		TaskID:     taskID,
-		FromStatus: string(model.StatusRunning),
-		ToStatus:   string(model.StatusCanceled),
-		Reason:     reason,
-		At:         now,
+		ID:          genID("evt"),
+		TaskID:      taskID,
+		FromStatus:  string(model.StatusRunning),
+		ToStatus:    string(model.StatusCanceled),
+		Reason:      reason,
+		ContainerID: containerID,
+		At:          now,
 	}); err != nil {
 		return err
 	}
@@ -713,6 +716,7 @@ func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
 		TaskID:       taskID,
 		UserID:       task.UserID,
 		TaskType:     task.TaskType,
+		ContainerID:  containerID,
 		Status:       model.StatusCanceled,
 		ErrorMessage: reason,
 		CreatedAt:    now,
@@ -752,32 +756,71 @@ func (s *Store) MarkTaskRetryOrFail(taskID, containerID, reason string) error {
 
 	maxAttempts := task.MaxRetries + 1
 	if task.Attempts < maxAttempts {
-		if _, err := tx.Exec(s.markRetrySQL(), string(model.StatusQueued), 0, now, reason, now, s.dialect.boolValue(false), taskID); err != nil {
+		res, err := tx.Exec(
+			s.markRetrySQL(),
+			string(model.StatusQueued),
+			0,
+			now,
+			reason,
+			now,
+			s.dialect.boolValue(false),
+			taskID,
+			string(model.StatusRunning),
+			containerID,
+		)
+		if err != nil {
 			return err
 		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return fmt.Errorf("task %s not running or owned by another container", taskID)
+		}
 		if err := s.insertEventTx(tx, model.TaskEvent{
-			ID:         genID("evt"),
-			TaskID:     taskID,
-			FromStatus: string(model.StatusRunning),
-			ToStatus:   string(model.StatusQueued),
-			Reason:     "retry scheduled: " + reason,
-			At:         now,
+			ID:          genID("evt"),
+			TaskID:      taskID,
+			FromStatus:  string(model.StatusRunning),
+			ToStatus:    string(model.StatusQueued),
+			Reason:      "retry scheduled: " + reason,
+			ContainerID: containerID,
+			At:          now,
 		}); err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
 
-	if _, err := tx.Exec(s.markFailedSQL(), string(model.StatusFailed), reason, now, now, s.dialect.boolValue(false), taskID); err != nil {
+	res, err := tx.Exec(
+		s.markFailedSQL(),
+		string(model.StatusFailed),
+		reason,
+		now,
+		now,
+		s.dialect.boolValue(false),
+		taskID,
+		string(model.StatusRunning),
+		containerID,
+	)
+	if err != nil {
 		return err
 	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("task %s not running or owned by another container", taskID)
+	}
 	if err := s.insertEventTx(tx, model.TaskEvent{
-		ID:         genID("evt"),
-		TaskID:     taskID,
-		FromStatus: string(model.StatusRunning),
-		ToStatus:   string(model.StatusFailed),
-		Reason:     reason,
-		At:         now,
+		ID:          genID("evt"),
+		TaskID:      taskID,
+		FromStatus:  string(model.StatusRunning),
+		ToStatus:    string(model.StatusFailed),
+		Reason:      reason,
+		ContainerID: containerID,
+		At:          now,
 	}); err != nil {
 		return err
 	}
@@ -794,6 +837,7 @@ func (s *Store) MarkTaskRetryOrFail(taskID, containerID, reason string) error {
 		TaskID:       taskID,
 		UserID:       task.UserID,
 		TaskType:     task.TaskType,
+		ContainerID:  containerID,
 		Status:       model.StatusFailed,
 		ErrorMessage: reason,
 		Usage:        usage,
@@ -1082,6 +1126,7 @@ func (s *Store) ensureSchema() error {
   task_id TEXT NOT NULL UNIQUE,
   user_id TEXT NOT NULL,
   task_type TEXT NOT NULL,
+  container_id TEXT NULL,
   status TEXT NOT NULL,
   error_message TEXT NOT NULL,
   output TEXT NOT NULL,
@@ -1098,7 +1143,7 @@ func (s *Store) ensureSchema() error {
 			return err
 		}
 	}
-	return nil
+	return s.ensureTaskResultsColumns()
 }
 
 func (s *Store) getTaskTx(tx *sql.Tx, taskID string) (model.Task, error) {
@@ -1131,6 +1176,7 @@ func (s *Store) insertTaskResultTx(tx *sql.Tx, result model.TaskResult) error {
 		result.TaskID,
 		result.UserID,
 		result.TaskType,
+		nullableString(result.ContainerID),
 		string(result.Status),
 		result.ErrorMessage,
 		result.Output,
@@ -1220,6 +1266,7 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (model.Task, error) 
 func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskResult, error) {
 	var (
 		r                                        model.TaskResult
+		containerID                              sql.NullString
 		usagePrompt, usageCompletion, usageTotal sql.NullInt64
 	)
 	if err := scanner.Scan(
@@ -1227,6 +1274,7 @@ func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskRes
 		&r.TaskID,
 		&r.UserID,
 		&r.TaskType,
+		&containerID,
 		&r.Status,
 		&r.ErrorMessage,
 		&r.Output,
@@ -1236,6 +1284,9 @@ func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskRes
 		&r.CreatedAt,
 	); err != nil {
 		return model.TaskResult{}, err
+	}
+	if containerID.Valid {
+		r.ContainerID = containerID.String
 	}
 	if usagePrompt.Valid || usageCompletion.Valid || usageTotal.Valid {
 		r.Usage = &model.TokenUsage{}
@@ -1289,6 +1340,77 @@ func normalizeReason(reason, fallback string) string {
 		return trimmed
 	}
 	return fallback
+}
+
+func (s *Store) ensureTaskResultsColumns() error {
+	return s.ensureTableColumn("task_results", "container_id", "TEXT NULL")
+}
+
+func (s *Store) ensureTableColumn(tableName, columnName, columnDef string) error {
+	exists, err := s.hasColumn(tableName, columnName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	stmt := fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN %s %s",
+		quoteIdentifier(tableName),
+		quoteIdentifier(columnName),
+		columnDef,
+	)
+	_, err = s.db.Exec(stmt)
+	return err
+}
+
+func (s *Store) hasColumn(tableName, columnName string) (bool, error) {
+	switch s.driver {
+	case "sqlite":
+		query := fmt.Sprintf("PRAGMA table_info(%s)", quoteIdentifier(tableName))
+		rows, err := s.db.Query(query)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				cid        int
+				name       string
+				colType    string
+				notnull    int
+				defaultV   sql.NullString
+				primaryKey int
+			)
+			if err := rows.Scan(&cid, &name, &colType, &notnull, &defaultV, &primaryKey); err != nil {
+				return false, err
+			}
+			if strings.EqualFold(name, columnName) {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	case "postgres":
+		var exists bool
+		err := s.db.QueryRow(
+			`SELECT EXISTS (
+SELECT 1
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = `+s.ph(1)+`
+  AND column_name = `+s.ph(2)+`
+)`,
+			tableName,
+			columnName,
+		).Scan(&exists)
+		return exists, err
+	default:
+		return false, fmt.Errorf("unsupported driver: %s", s.driver)
+	}
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func isSafeRelativePath(rel string) bool {
@@ -1405,7 +1527,6 @@ SET status=` + s.ph(1) + `,
     updated_at=` + s.ph(6) + `,
     finished_at=` + s.ph(7) + `,
     lease_until=NULL,
-    container_id=NULL,
     cancel_requested=` + s.ph(8) + `
 WHERE id=` + s.ph(9) + ` AND status=` + s.ph(10) + ` AND container_id=` + s.ph(11)
 }
@@ -1417,7 +1538,6 @@ SET status=` + s.ph(1) + `,
     updated_at=` + s.ph(3) + `,
     finished_at=` + s.ph(4) + `,
     lease_until=NULL,
-    container_id=NULL,
     cancel_requested=` + s.ph(5) + `
 WHERE id=` + s.ph(6) + ` AND status=` + s.ph(7) + ` AND container_id=` + s.ph(8)
 }
@@ -1432,7 +1552,7 @@ SET status=` + s.ph(1) + `,
     lease_until=NULL,
     container_id=NULL,
     cancel_requested=` + s.ph(6) + `
-WHERE id=` + s.ph(7)
+WHERE id=` + s.ph(7) + ` AND status=` + s.ph(8) + ` AND container_id=` + s.ph(9)
 }
 
 func (s *Store) markFailedSQL() string {
@@ -1442,9 +1562,8 @@ SET status=` + s.ph(1) + `,
     updated_at=` + s.ph(3) + `,
     finished_at=` + s.ph(4) + `,
     lease_until=NULL,
-    container_id=NULL,
     cancel_requested=` + s.ph(5) + `
-WHERE id=` + s.ph(6)
+WHERE id=` + s.ph(6) + ` AND status=` + s.ph(7) + ` AND container_id=` + s.ph(8)
 }
 
 func (s *Store) selectExpiredTasksSQL() string {
@@ -1508,20 +1627,20 @@ func (s *Store) selectEventsSQL(withTask bool) string {
 func (s *Store) insertTaskResultSQL() string {
 	if s.driver == "postgres" {
 		return `INSERT INTO task_results (
-id, task_id, user_id, task_type, status, error_message, output,
+id, task_id, user_id, task_type, container_id, status, error_message, output,
 usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
-) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `)
+) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `, ` + s.ph(13) + `)
 ON CONFLICT (task_id) DO NOTHING`
 	}
 	return `INSERT INTO task_results (
-id, task_id, user_id, task_type, status, error_message, output,
+id, task_id, user_id, task_type, container_id, status, error_message, output,
 usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
-) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `)
+) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `, ` + s.ph(13) + `)
 ON CONFLICT(task_id) DO NOTHING`
 }
 
 func (s *Store) selectPendingTaskResultsSQL() string {
-	return `SELECT id, task_id, user_id, task_type, status, error_message, output,
+	return `SELECT id, task_id, user_id, task_type, container_id, status, error_message, output,
 usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at
 FROM task_results
 WHERE delivered_at IS NULL

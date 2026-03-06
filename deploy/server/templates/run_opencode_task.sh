@@ -163,6 +163,9 @@ if ! OPENCODE_CONFIG="$OPENCODE_RUN_CONFIG" "$@" >"$CLOUDCLAW_WORKSPACE/result.t
   echo "opencode run command failed" >&2
   exit 1
 fi
+if [ ! -s "$CLOUDCLAW_WORKSPACE/result.txt" ] && [ -s "$stderr_log" ]; then
+  cp "$stderr_log" "$CLOUDCLAW_WORKSPACE/result.txt"
+fi
 
 # Prune large runtime artifacts before cloudclaw persists user data into DB.
 prune_persisted_opencode_state

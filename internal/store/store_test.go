@@ -513,6 +513,9 @@ func TestDequeueTaskResultsSuccess(t *testing.T) {
 	if got.TaskID != task.ID || got.UserID != "u1" || got.TaskType != "smoke" {
 		t.Fatalf("unexpected result identity: %+v", got)
 	}
+	if got.ContainerID != "container-1" {
+		t.Fatalf("unexpected result container id: %q", got.ContainerID)
+	}
 	if got.Status != model.StatusSuccess {
 		t.Fatalf("expected success result, got %s", got.Status)
 	}
@@ -521,6 +524,13 @@ func TestDequeueTaskResultsSuccess(t *testing.T) {
 	}
 	if got.Usage == nil || got.Usage.TotalTokens != 3 {
 		t.Fatalf("unexpected usage: %+v", got.Usage)
+	}
+	taskAfter, err := s.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("get task after success: %v", err)
+	}
+	if taskAfter.ContainerID != "container-1" {
+		t.Fatalf("expected terminal task container id to be retained, got %q", taskAfter.ContainerID)
 	}
 
 	again, err := s.DequeueTaskResults(10)

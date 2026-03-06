@@ -55,9 +55,10 @@ type TaskResult struct {
 	TaskID       string      `json:"task_id"`
 	UserID       string      `json:"user_id"`
 	TaskType     string      `json:"task_type"`
+	ContainerID  string      `json:"container_id,omitempty"`
 	Status       TaskStatus  `json:"status"`
 	ErrorMessage string      `json:"error_message,omitempty"`
-	Output       string      `json:"output,omitempty"`
+	Output       string      `json:"output"`
 	Usage        *TokenUsage `json:"usage,omitempty"`
 	CreatedAt    time.Time   `json:"created_at"`
 }
