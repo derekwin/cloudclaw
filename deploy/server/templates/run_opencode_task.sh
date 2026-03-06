@@ -124,7 +124,7 @@ OPENCODE_RUN_CONFIG="$OPENCODE_CONFIG"
 # Only create a merged config directory when workspace has per-user `.opencode`.
 # This avoids per-task full-directory copies for the common shared-only path.
 if [ -d "$USER_WORKSPACE_DIR/.opencode" ]; then
-  MERGED_CONFIG_DIR="$(mktemp -d "$TMP_ROOT/opencode-config.XXXXXX")"
+  MERGED_CONFIG_DIR="$(mktemp -d -p "$TMP_ROOT" opencode-config.XXXXXX)"
   if [ -d "$OPENCODE_SHARED_CONFIG_DIR" ]; then
     cp -R "$OPENCODE_SHARED_CONFIG_DIR/." "$MERGED_CONFIG_DIR/" || true
   fi
@@ -157,7 +157,7 @@ if [ -n "$OPENCODE_ATTACH" ]; then
 fi
 set -- "$@" "$CLOUDCLAW_INPUT"
 
-stderr_log="$(mktemp "$TMP_ROOT/opencode-run.XXXXXX.stderr.log")"
+stderr_log="$(mktemp -p "$TMP_ROOT" opencode-run.XXXXXX)"
 if ! OPENCODE_CONFIG="$OPENCODE_RUN_CONFIG" "$@" >"$CLOUDCLAW_WORKSPACE/result.txt" 2>"$stderr_log"; then
   cat "$stderr_log" >&2 || true
   echo "opencode run command failed" >&2
