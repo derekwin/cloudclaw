@@ -24,8 +24,10 @@ bash deploy/server/cloudclawctl.sh up
   - 容器内映射为 `~/.config/opencode`
   - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；复制不到再尝试镜像提取；最后兜底最小配置骨架
 - 用户私有运行时数据：
-  - `./cloudclaw_data/user-runtime/<user_id>/opencode/*`
-  - 容器内映射为 `~/.local/share/opencode`
+  - `./cloudclaw_data/user-runtime/<normalized_user>/opencode/*`
+  - 不直接挂载到容器；任务执行时采用 `runDir` copy-in/copy-out：
+  - `Prepare`：用户私有目录 -> `runDir/.opencode-home/.local/share/opencode`
+  - `Persist`：`runDir/.opencode-home/.local/share/opencode` -> 用户私有目录
 
 ## 常用命令
 
@@ -57,4 +59,5 @@ bash deploy/server/cloudclawctl.sh down
   - `CONTAINER_NETWORK=<docker-network-name>`
 - 目录挂载策略：
   - `./cloudclaw_data/shared/opencode` 挂载到容器 `~/.config/opencode`（只读）
-  - `./cloudclaw_data/user-runtime/<user>/opencode` 映射为容器 `~/.local/share/opencode`（用户私有，可写）
+  - `./cloudclaw_data/data/runs` 挂载到容器 `WORKSPACE_MOUNT_PATH`（默认 `/workspace/cloudclaw/runs`）
+  - 用户私有目录 `./cloudclaw_data/user-runtime/*` 仅由 runner 在宿主机侧做 copy-in/copy-out

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"cloudclaw/internal/model"
@@ -194,5 +195,103 @@ func TestPersistKeepsSharedSkillsInMountMode(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected shared skills file to remain in mount mode, got %v", store.replacedFiles)
+	}
+}
+
+func TestEphemeralModeCopiesUserRuntimeInAndOut(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "runs", "t1-attempt-1")
+	userRuntimeDir := filepath.Join(root, "user-runtime")
+
+	store := &captureStore{runDir: runDir}
+	manager, err := NewLocalManager(LocalManagerConfig{
+		Store:          store,
+		WorkspaceState: "ephemeral",
+		UserRuntimeDir: userRuntimeDir,
+	})
+	if err != nil {
+		t.Fatalf("new local manager: %v", err)
+	}
+
+	userDir := filepath.Join(userRuntimeDir, safeUserRuntimeName("u:test"), "opencode")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatalf("mkdir user runtime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, "opencode.db"), []byte("db1"), 0o644); err != nil {
+		t.Fatalf("write user runtime seed: %v", err)
+	}
+
+	prepared, err := manager.Prepare(model.Task{ID: "t1", UserID: "u:test", Attempts: 1})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if prepared != runDir {
+		t.Fatalf("expected run dir %s, got %s", runDir, prepared)
+	}
+	runState := filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
+	if _, err := os.Stat(filepath.Join(runState, "opencode.db")); err != nil {
+		t.Fatalf("expected runtime copied into run dir, err=%v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(runState, "snapshot.txt"), []byte("snap"), 0o644); err != nil {
+		t.Fatalf("write run state mutation: %v", err)
+	}
+
+	if err := manager.Persist(model.Task{ID: "t1", UserID: "u:test"}, runDir); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(userDir, "snapshot.txt")); err != nil {
+		t.Fatalf("expected runtime copied back to user runtime dir, err=%v", err)
+	}
+	if store.replaceCalls != 0 {
+		t.Fatalf("expected no DB replace call in ephemeral user-runtime mode, got %d", store.replaceCalls)
+	}
+}
+
+func TestSafeUserRuntimeName(t *testing.T) {
+	got := safeUserRuntimeName("  u/a:b  ")
+	if !strings.HasPrefix(got, "u_a_b-") {
+		t.Fatalf("unexpected normalized user runtime name: %s", got)
+	}
+}
+
+func TestEphemeralPersistKeepsExistingRuntimeWhenRunStateMissing(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "runs", "t2-attempt-1")
+	userRuntimeDir := filepath.Join(root, "user-runtime")
+	userID := "u-missing"
+
+	store := &captureStore{runDir: runDir}
+	manager, err := NewLocalManager(LocalManagerConfig{
+		Store:          store,
+		WorkspaceState: "ephemeral",
+		UserRuntimeDir: userRuntimeDir,
+	})
+	if err != nil {
+		t.Fatalf("new local manager: %v", err)
+	}
+
+	userDir := filepath.Join(userRuntimeDir, safeUserRuntimeName(userID), "opencode")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatalf("mkdir user runtime: %v", err)
+	}
+	sentinel := filepath.Join(userDir, "auth.json")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("seed user runtime: %v", err)
+	}
+
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	if err := manager.Persist(model.Task{ID: "t2", UserID: userID}, runDir); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+
+	b, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("read sentinel: %v", err)
+	}
+	if string(b) != "keep" {
+		t.Fatalf("unexpected sentinel content after persist: %q", string(b))
 	}
 }

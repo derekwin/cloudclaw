@@ -59,6 +59,7 @@ AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 OPENCODE_HOST_CONFIG_DIR="${OPENCODE_HOST_CONFIG_DIR:-$HOME/.config/opencode}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
+WORKSPACE_MOUNT_PATH="${WORKSPACE_MOUNT_PATH:-/workspace/cloudclaw/runs}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
 OWNER_GID="${AGENT_OWNER_GID:-${OPENCODE_OWNER_GID:-${SUDO_GID:-$(id -g)}}}"
 
@@ -71,7 +72,6 @@ SHARED_OPENCODE_DIR="$SHARED_DIR/opencode"
 LEGACY_OPENCODE_CONFIG_DIR="$CC_HOME/opencode/config"
 DATA_DIR="$CC_HOME/data"
 USER_RUNTIME_DIR="$CC_HOME/user-runtime"
-USER_RUNTIME_MOUNT_PATH="${USER_RUNTIME_MOUNT_PATH:-/workspace/cloudclaw/user-runtime}"
 LOG_DIR="$CC_HOME/logs"
 RUN_DIR="$CC_HOME/run"
 PID_FILE="$RUN_DIR/cloudclaw.pid"
@@ -208,7 +208,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$DATA_DIR" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
   if [ -d "$LEGACY_OPENCODE_CONFIG_DIR" ] && [ -n "$(ls -A "$LEGACY_OPENCODE_CONFIG_DIR" 2>/dev/null)" ] && [ -z "$(ls -A "$SHARED_OPENCODE_DIR" 2>/dev/null)" ]; then
     cp -R "$LEGACY_OPENCODE_CONFIG_DIR/." "$SHARED_OPENCODE_DIR/" || true
     log "migrated legacy opencode shared config: $LEGACY_OPENCODE_CONFIG_DIR -> $SHARED_OPENCODE_DIR"
@@ -585,11 +585,8 @@ start_pool() {
     if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
-        "-e" "CLOUDCLAW_USER_RUNTIME_HOME_BASE=${USER_RUNTIME_MOUNT_PATH}"
+        "-e" "OPENCODE_PERSIST_MODE=${OPENCODE_PERSIST_MODE:-full}"
       )
-      if [ -n "${OPENCODE_PERSIST_MODE:-}" ]; then
-        env_args+=("-e" "OPENCODE_PERSIST_MODE=${OPENCODE_PERSIST_MODE}")
-      fi
     else
       env_args+=(
         "-e" "CLAUDECODE_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
@@ -650,7 +647,7 @@ start_pool() {
       "${harden_args[@]}" \
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
-      -v "${USER_RUNTIME_DIR}:${USER_RUNTIME_MOUNT_PATH}" \
+      -v "${DATA_DIR}/runs:${WORKSPACE_MOUNT_PATH}" \
       "${env_args[@]}" \
       "$RUNNER_IMAGE" \
       -lc 'sleep infinity' >/dev/null
@@ -705,6 +702,14 @@ start_cloudclaw() {
       workspace_state_mode="db"
     fi
   fi
+  workspace_mode="${WORKSPACE_MODE:-}"
+  if [ -z "$workspace_mode" ]; then
+    if [ "$RUNTIME_NAME" = "opencode" ]; then
+      workspace_mode="mount"
+    else
+      workspace_mode="copy"
+    fi
+  fi
 
   cmd=(
     "$CLOUDCLAW_BIN" run
@@ -712,11 +717,16 @@ start_cloudclaw() {
     --db-driver "$DB_DRIVER"
     --executor "$RUNTIME_EXECUTOR"
     --workspace-state-mode "$workspace_state_mode"
+    --workspace-mode "$workspace_mode"
     --docker-label-selector "$POOL_LABEL"
     --docker-remote-dir "$DOCKER_REMOTE_DIR"
     --shared-skills-dir "$SHARED_DIR"
     --docker-task-cmd "$DOCKER_TASK_CMD"
+    --user-runtime-dir "$USER_RUNTIME_DIR"
   )
+  if [ "$workspace_mode" = "mount" ]; then
+    cmd+=(--workspace-mount-path "$WORKSPACE_MOUNT_PATH")
+  fi
 
   if [ -n "$DB_DSN" ]; then
     cmd+=(--db-dsn "$DB_DSN")
@@ -888,7 +898,8 @@ Environment overrides:
   CONTAINER_NETWORK (optional docker network name, e.g. internal)
   AGENT_ENV_FILE (optional env file path for sensitive vars like API keys)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
-  USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
+  WORKSPACE_MOUNT_PATH (default: /workspace/cloudclaw/runs; container mount path for runDir mount mode)
+  WORKSPACE_MODE (optional: mount|copy; default: opencode=mount, claudecode=copy)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
   WORKSPACE_STATE_MODE (optional: db|ephemeral; default: opencode=ephemeral, claudecode=db)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)

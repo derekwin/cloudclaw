@@ -2,8 +2,10 @@ package workspace
 
 import (
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"cloudclaw/internal/fsutil"
@@ -22,6 +24,7 @@ type LocalManagerConfig struct {
 	SharedSkillsDir  string
 	SharedSkillsMode string // copy | mount
 	WorkspaceState   string // db | ephemeral (alias: none)
+	UserRuntimeDir   string // host dir to persist per-user runtime state for ephemeral mode
 }
 
 type LocalManager struct {
@@ -29,6 +32,7 @@ type LocalManager struct {
 	sharedSkillsDir  string
 	sharedSkillsMode string
 	workspaceState   string
+	userRuntimeDir   string
 }
 
 func NewLocalManager(cfg LocalManagerConfig) (*LocalManager, error) {
@@ -40,6 +44,7 @@ func NewLocalManager(cfg LocalManagerConfig) (*LocalManager, error) {
 		sharedSkillsDir:  cfg.SharedSkillsDir,
 		sharedSkillsMode: normalizeSharedSkillsMode(cfg.SharedSkillsMode),
 		workspaceState:   normalizeWorkspaceStateMode(cfg.WorkspaceState),
+		userRuntimeDir:   strings.TrimSpace(cfg.UserRuntimeDir),
 	}, nil
 }
 
@@ -54,6 +59,9 @@ func (m *LocalManager) Prepare(task model.Task) (string, error) {
 		}
 	} else {
 		if err := fsutil.RemoveAndRecreate(runDir); err != nil {
+			return "", err
+		}
+		if err := m.restoreUserRuntimeToRunDir(task.UserID, runDir); err != nil {
 			return "", err
 		}
 	}
@@ -83,6 +91,9 @@ func normalizeWorkspaceStateMode(mode string) string {
 
 func (m *LocalManager) Persist(task model.Task, runDir string) error {
 	if m.workspaceState != "db" {
+		if err := m.persistRunDirRuntimeToUser(task.UserID, runDir); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -99,6 +110,76 @@ func (m *LocalManager) Persist(task model.Task, runDir string) error {
 	}
 	_, err := m.store.SaveSnapshot(task.UserID, task.ID, fmt.Sprintf("db://user-data/%s/%s", task.UserID, task.ID))
 	return err
+}
+
+func (m *LocalManager) restoreUserRuntimeToRunDir(userID, runDir string) error {
+	if m.userRuntimeDir == "" {
+		return nil
+	}
+	src := m.userRuntimeOpencodeDir(userID)
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("user runtime path is not directory: %s", src)
+	}
+	dst := opencodeRunStateDir(runDir)
+	if err := fsutil.RemoveAndRecreate(dst); err != nil {
+		return err
+	}
+	return fsutil.CopyDir(src, dst)
+}
+
+func (m *LocalManager) persistRunDirRuntimeToUser(userID, runDir string) error {
+	if m.userRuntimeDir == "" {
+		return nil
+	}
+	src := opencodeRunStateDir(runDir)
+	dest := m.userRuntimeOpencodeDir(userID)
+	info, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Keep previous runtime state if current task did not produce a state dir.
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("run dir opencode state path is not directory: %s", src)
+	}
+	if err := fsutil.RemoveAndRecreate(dest); err != nil {
+		return err
+	}
+	return fsutil.CopyDir(src, dest)
+}
+
+func (m *LocalManager) userRuntimeOpencodeDir(userID string) string {
+	normalized := safeUserRuntimeName(userID)
+	return filepath.Join(m.userRuntimeDir, normalized, "opencode")
+}
+
+func opencodeRunStateDir(runDir string) string {
+	return filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
+}
+
+var unsafeUserCharPattern = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+func safeUserRuntimeName(userID string) string {
+	trimmed := strings.TrimSpace(userID)
+	if trimmed == "" {
+		trimmed = "anonymous"
+	}
+	base := unsafeUserCharPattern.ReplaceAllString(trimmed, "_")
+	base = strings.Trim(base, "._-")
+	if base == "" {
+		base = "anonymous"
+	}
+	sum := crc32.ChecksumIEEE([]byte(trimmed))
+	return fmt.Sprintf("%s-%d", base, sum)
 }
 
 func pruneRuntimeArtifacts(runDir string) error {
