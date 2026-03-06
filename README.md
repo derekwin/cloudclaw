@@ -32,6 +32,9 @@ bash deploy/server/cloudclawctl.sh up
 ## 常用命令
 
 ```bash
+# 下面命令默认都要求先设置 runtime
+export AGENT_RUNTIME=opencode
+
 bash deploy/server/cloudclawctl.sh status
 bash deploy/server/cloudclawctl.sh runner logs 200
 bash deploy/server/cloudclawctl.sh smoke
@@ -46,6 +49,24 @@ bash deploy/server/cloudclawctl.sh result dequeue 20
 # 停止
 bash deploy/server/cloudclawctl.sh down
 ```
+
+## 运行自检（确认容器内 opencode 正常执行）
+
+```bash
+export AGENT_RUNTIME=opencode
+
+# 1) 提交任务并等待完成
+bash deploy/server/cloudclawctl.sh smoke
+
+# 2) 查看任务状态/容器分配/结果
+bash deploy/server/cloudclawctl.sh task trace <task_id>
+bash deploy/server/cloudclawctl.sh result get <task_id>
+```
+
+判定方式：
+- `task status` 里 `status=SUCCEEDED` 且有 `container_id`：说明任务已在某个容器执行完成
+- `result.output` 非空：可看到 opencode 的执行输出
+- 若输出包含 “Unable to connect” 之类报错：说明容器内 opencode 已运行，但模型 provider 网络/鉴权不可达
 
 ## 安全部署建议
 
