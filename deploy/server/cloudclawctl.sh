@@ -51,7 +51,8 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
-OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$CC_HOME/opencode/config/opencode.json}"
+OPENCODE_CONFIG_FILE_ENV="${OPENCODE_CONFIG_FILE:-}"
+OPENCODE_CONFIG_FILE="$CC_HOME/opencode/config/opencode.json"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -117,6 +118,12 @@ load_runtime_profile() {
     opencode)
       RUNTIME_NAME="opencode"
       RUNTIME_EXECUTOR="docker-opencode"
+      if [ -n "$OPENCODE_CONFIG_FILE_ENV" ]; then
+        resolved_override="$(resolve_host_path "$OPENCODE_CONFIG_FILE_ENV")"
+        if [ "$resolved_override" != "$OPENCODE_CONFIG_FILE" ]; then
+          log "ignoring OPENCODE_CONFIG_FILE override: $resolved_override (fixed path: $OPENCODE_CONFIG_FILE)"
+        fi
+      fi
       RUNTIME_CONFIG_FILE="$(resolve_host_path "$OPENCODE_CONFIG_FILE")"
       RUNTIME_CONFIG_DIR="$(dirname "$RUNTIME_CONFIG_FILE")"
       RUNTIME_CONFIG_MOUNT_PATH="$OPENCODE_CONFIG_MOUNT_PATH"
@@ -766,7 +773,6 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
-  OPENCODE_CONFIG_FILE (default: <CC_HOME>/opencode/config/opencode.json)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
@@ -780,6 +786,7 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
+  opencode config path is fixed at: <CC_HOME>/opencode/config/opencode.json
   "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.
