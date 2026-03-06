@@ -51,8 +51,6 @@ bash deploy/server/cloudclawctl.sh down
   - `CONTAINER_HARDEN=1`（默认）启用 `no-new-privileges`、`cap-drop=ALL`、`pids-limit`
 - 可选进一步收敛：
   - `CONTAINER_READONLY_ROOTFS=1` 开启只读根文件系统（自动挂载 `/tmp`、`/var/tmp` tmpfs）
-- 建议固定镜像版本，不要长期使用 `latest`：
-  - 例如 `BASE_IMAGE=ghcr.io/anomalyco/opencode:<固定版本>`
 - 密钥建议放 `env-file`，不要写进仓库：
   - `AGENT_ENV_FILE=/abs/path/opencode.env`
 - 可选放到私有网络：

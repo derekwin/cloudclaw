@@ -180,11 +180,6 @@ can_pull_image() {
 
 resolve_base_image() {
   load_runtime_profile
-  case "$BASE_IMAGE" in
-    *:latest)
-      log "warning: using mutable image tag 'latest' is not recommended in production; prefer fixed version tags"
-      ;;
-  esac
   if can_pull_image "$BASE_IMAGE"; then
     echo "$BASE_IMAGE"
     return 0
