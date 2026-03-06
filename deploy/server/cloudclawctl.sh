@@ -214,6 +214,12 @@ ensure_dirs() {
 ensure_runtime_config_ready() {
   load_runtime_profile
   ensure_dirs
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+      return
+    fi
+    die "missing opencode shared config dir: $RUNTIME_CONFIG_DIR (run: AGENT_RUNTIME=opencode bash $0 config init-full)"
+  fi
   if [ ! -s "$RUNTIME_CONFIG_FILE" ]; then
     die "missing ${RUNTIME_NAME} config: $RUNTIME_CONFIG_FILE (run: AGENT_RUNTIME=$RUNTIME_NAME bash $0 config init-full)"
   fi
@@ -222,6 +228,14 @@ ensure_runtime_config_ready() {
 ensure_runtime_config_for_up() {
   load_runtime_profile
   ensure_dirs
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+      return
+    fi
+    log "opencode shared config not found, bootstrapping (same as: AGENT_RUNTIME=opencode $0 init)"
+    init_full_config
+    return
+  fi
   if [ -s "$RUNTIME_CONFIG_FILE" ]; then
     return
   fi
@@ -238,6 +252,18 @@ show_config_path() {
 show_config() {
   load_runtime_profile
   ensure_dirs
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    if [ -f "$RUNTIME_CONFIG_FILE" ]; then
+      cat "$RUNTIME_CONFIG_FILE"
+      return
+    fi
+    if [ -d "$RUNTIME_CONFIG_DIR" ]; then
+      ls -la "$RUNTIME_CONFIG_DIR"
+      return
+    fi
+    echo "config dir not found: $RUNTIME_CONFIG_DIR" >&2
+    exit 1
+  fi
   if [ ! -f "$RUNTIME_CONFIG_FILE" ]; then
     echo "config not found: $RUNTIME_CONFIG_FILE" >&2
     exit 1
@@ -260,6 +286,9 @@ import_config() {
 
 reset_config() {
   load_runtime_profile
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    rm -rf "$RUNTIME_CONFIG_DIR"
+  fi
   init_full_config
   log "reset $RUNTIME_NAME config: $RUNTIME_CONFIG_FILE"
 }
@@ -283,9 +312,9 @@ init_opencode_config_full() {
   need_cmd docker
   mkdir -p "$RUNTIME_CONFIG_DIR"
 
-  if [ -f "$RUNTIME_CONFIG_FILE" ]; then
-    cp "$RUNTIME_CONFIG_FILE" "$RUNTIME_CONFIG_FILE.bak"
-    log "backup created: $RUNTIME_CONFIG_FILE.bak"
+  if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+    log "opencode shared config already exists, skip bootstrap: $RUNTIME_CONFIG_DIR"
+    return
   fi
 
   local source_image="$RUNNER_IMAGE"
@@ -293,11 +322,15 @@ init_opencode_config_full() {
     source_image="$(resolve_base_image)"
   fi
 
-  if ! docker run --rm --entrypoint /bin/sh "$source_image" -lc '
+  if ! docker run --rm --entrypoint /bin/sh -v "$RUNTIME_CONFIG_DIR:/host-opencode-config" "$source_image" -lc '
 set -eu
+TARGET=/host-opencode-config
+mkdir -p "$TARGET"
+
 HOME=/tmp/opencode-home
 export HOME
 export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$XDG_CONFIG_HOME/opencode"
 
 if command -v opencode >/dev/null 2>&1; then
@@ -313,34 +346,36 @@ for p in \
   "/root/.config/opencode/opencode.json" \
   "/workspace/.config/opencode/opencode.json"; do
   if [ -s "$p" ]; then
-    cat "$p"
+    cp -R "$(dirname "$p")/." "$TARGET/"
     exit 0
   fi
 done
 
 example="$(find / -maxdepth 7 -type f \( -name "opencode.json" -o -name "opencode.*.json" -o -name "*opencode*config*.json" \) 2>/dev/null | head -n 1 || true)"
 if [ -n "$example" ] && [ -s "$example" ]; then
-  cat "$example"
+  cp "$example" "$TARGET/opencode.json"
   exit 0
 fi
 
 echo "unable to generate default opencode config from image" >&2
 exit 1
-' > "$RUNTIME_CONFIG_FILE.tmp"; then
-    log "warning: image did not output a default config, writing minimal config stub"
-    cat > "$RUNTIME_CONFIG_FILE.tmp" <<'JSON'
+'; then
+    log "warning: image did not output default opencode config, writing minimal stub"
+    cat > "$RUNTIME_CONFIG_FILE" <<'JSON'
 {
   "$schema": "https://opencode.ai/config.json"
 }
 JSON
   fi
 
-if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
-  rm -f "$RUNTIME_CONFIG_FILE.tmp"
-  die "generated config is empty: $RUNTIME_CONFIG_FILE.tmp"
+if [ ! -f "$RUNTIME_CONFIG_FILE" ]; then
+  cat > "$RUNTIME_CONFIG_FILE" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+JSON
 fi
 
-mv -f "$RUNTIME_CONFIG_FILE.tmp" "$RUNTIME_CONFIG_FILE"
 mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
 log "initialized opencode config: $RUNTIME_CONFIG_FILE"
 }
@@ -455,6 +490,19 @@ EOF
 print_runtime_config_paths() {
   load_runtime_profile
   ensure_dirs
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    cat <<EOF
+runtime:
+  $RUNTIME_NAME
+shared config dir:
+  $RUNTIME_CONFIG_DIR
+default config file:
+  $RUNTIME_CONFIG_FILE
+container mount path:
+  $RUNTIME_CONFIG_MOUNT_PATH
+EOF
+    return
+  fi
   cat <<EOF
 runtime:
   $RUNTIME_NAME
@@ -510,7 +558,6 @@ start_pool() {
     env_args=()
     if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
-        "-e" "OPENCODE_CONFIG=$(runtime_config_mount_file)"
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
         "-e" "CLOUDCLAW_USER_RUNTIME_HOME_BASE=${USER_RUNTIME_MOUNT_PATH}"
       )
@@ -790,7 +837,7 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
-  opencode config path is fixed at: <CC_HOME>/opencode/config/opencode.json
+  opencode shared config dir is fixed at: <CC_HOME>/opencode/config
   "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.
