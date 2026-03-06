@@ -19,6 +19,16 @@ bash deploy/server/cloudclawctl.sh smoke
 # dequeue finished task results for downstream consumer
 bash deploy/server/cloudclawctl.sh result dequeue 20
 
+# simulate concurrent submit + independent result-poll worker
+go run ./cmd/tasksim \
+  --data-dir ./cloudclaw_data/data \
+  --db-driver sqlite \
+  --users sim_u1,sim_u2,sim_u3 \
+  --tasks-per-user 5 \
+  --submit-workers 4 \
+  --poll-interval 1s \
+  --dequeue-limit 20
+
 # stop
 bash deploy/server/cloudclawctl.sh down
 ```
