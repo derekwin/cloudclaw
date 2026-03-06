@@ -37,15 +37,30 @@ if [ ! -s "$PICOCLAW_CONFIG" ]; then
   exit 1
 fi
 
-model_name_re="$(printf '%s' "$PICO_MODEL_NAME" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
-if ! grep -Eq "\"model_name\"[[:space:]]*:[[:space:]]*\"$model_name_re\"" "$PICOCLAW_CONFIG"; then
-  echo "model \"$PICO_MODEL_NAME\" not found in $PICOCLAW_CONFIG" >&2
+first_model_in_list="$(awk '
+  /"model_list"[[:space:]]*:/ {in_list=1}
+  in_list && match($0, /"model_name"[[:space:]]*:[[:space:]]*"([^"]+)"/, m) { print m[1]; exit }
+' "$PICOCLAW_CONFIG")"
+
+if [ -z "$first_model_in_list" ]; then
+  echo "no model_name found in model_list: $PICOCLAW_CONFIG" >&2
   exit 1
+fi
+
+selected_model="$PICO_MODEL_NAME"
+selected_model_re="$(printf '%s' "$selected_model" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
+if ! awk -v model="$selected_model_re" '
+  /"model_list"[[:space:]]*:/ {in_list=1}
+  in_list && $0 ~ "\"model_name\"[[:space:]]*:[[:space:]]*\"" model "\"" { found=1; exit }
+  END { exit found ? 0 : 1 }
+' "$PICOCLAW_CONFIG"; then
+  echo "model \"$selected_model\" not found in model_list, fallback to \"$first_model_in_list\"" >&2
+  selected_model="$first_model_in_list"
 fi
 
 PICOCLAW_HOME="$PICOCLAW_HOME" \
 PICOCLAW_CONFIG="$PICOCLAW_CONFIG" \
-picoclaw agent --model "$PICO_MODEL_NAME" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
+picoclaw agent --model "$selected_model" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
 
 prompt_chars=$(printf "%s" "$CLOUDCLAW_INPUT" | wc -c | tr -d ' ')
 resp_chars=$(wc -c < "$CLOUDCLAW_WORKSPACE/result.txt" | tr -d ' ')
