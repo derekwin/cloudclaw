@@ -4,6 +4,8 @@
 
 # Local runtime data
 data/
+cloudclaw_data/
+cloudclaw_data-home
 *.db
 
 # Python
