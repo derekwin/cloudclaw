@@ -16,6 +16,9 @@ bash deploy/server/cloudclawctl.sh runner logs 200
 # smoke
 bash deploy/server/cloudclawctl.sh smoke
 
+# dequeue finished task results for downstream consumer
+bash deploy/server/cloudclawctl.sh result dequeue 20
+
 # stop
 bash deploy/server/cloudclawctl.sh down
 ```

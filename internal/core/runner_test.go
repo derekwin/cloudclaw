@@ -31,7 +31,7 @@ func (s *stubStore) IsCancelRequested(taskID string) (bool, error) {
 	return false, nil
 }
 
-func (s *stubStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error {
+func (s *stubStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage, output string) error {
 	return nil
 }
 
@@ -133,7 +133,7 @@ func (s *queueStore) IsCancelRequested(taskID string) (bool, error) {
 	return false, nil
 }
 
-func (s *queueStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error {
+func (s *queueStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage, output string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.completed++
@@ -273,7 +273,7 @@ func (s *runTaskStore) IsCancelRequested(taskID string) (bool, error) {
 	return false, nil
 }
 
-func (s *runTaskStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error {
+func (s *runTaskStore) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage, output string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.succeededCalls++

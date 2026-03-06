@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -242,11 +243,20 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 		return
 	}
 
-	if err := r.cfg.Store.MarkTaskSucceeded(task.ID, containerID, usage); err != nil {
+	output := readTaskOutput(runDir)
+	if err := r.cfg.Store.MarkTaskSucceeded(task.ID, containerID, usage, output); err != nil {
 		r.cfg.Logger.Printf("mark success failed for task %s: %v", task.ID, err)
 		return
 	}
 	r.cfg.Logger.Printf("task %s succeeded", task.ID)
+}
+
+func readTaskOutput(runDir string) string {
+	b, err := os.ReadFile(filepath.Join(runDir, "result.txt"))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 func (r *Runner) recoveryLoop(ctx context.Context) {
