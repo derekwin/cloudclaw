@@ -525,6 +525,9 @@ func TestDequeueTaskResultsSuccess(t *testing.T) {
 	if got.Usage == nil || got.Usage.TotalTokens != 3 {
 		t.Fatalf("unexpected usage: %+v", got.Usage)
 	}
+	if got.DeliveredAt != nil {
+		t.Fatalf("expected dequeued item delivered_at to be nil in payload, got %v", got.DeliveredAt)
+	}
 	taskAfter, err := s.GetTask(task.ID)
 	if err != nil {
 		t.Fatalf("get task after success: %v", err)
@@ -539,6 +542,14 @@ func TestDequeueTaskResultsSuccess(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Fatalf("expected empty second dequeue, got %d", len(again))
+	}
+
+	stored, err := s.GetTaskResult(task.ID)
+	if err != nil {
+		t.Fatalf("get task result by task id: %v", err)
+	}
+	if stored.DeliveredAt == nil {
+		t.Fatal("expected delivered_at to be set after dequeue")
 	}
 }
 

@@ -380,11 +380,13 @@ func userDataPruneOpencodeRuntimeCmd(args []string) error {
 
 func resultCmd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: cloudclaw result <dequeue>")
+		return fmt.Errorf("usage: cloudclaw result <dequeue|get>")
 	}
 	switch args[0] {
 	case "dequeue":
 		return resultDequeueCmd(args[1:])
+	case "get":
+		return resultGetCmd(args[1:])
 	default:
 		return fmt.Errorf("unknown result command: %s", args[0])
 	}
@@ -406,6 +408,25 @@ func resultDequeueCmd(args []string) error {
 	})
 }
 
+func resultGetCmd(args []string) error {
+	fs := flag.NewFlagSet("result get", flag.ContinueOnError)
+	sf := bindCommonStoreFlags(fs)
+	taskID := fs.String("task-id", "", "task id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*taskID) == "" {
+		return fmt.Errorf("task-id is required")
+	}
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		item, err := cli.GetTaskResult(*taskID)
+		if err != nil {
+			return err
+		}
+		return printJSON(item)
+	})
+}
+
 func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -419,6 +440,7 @@ func usage() {
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
 	  cloudclaw result dequeue [--limit 20]
+	  cloudclaw result get --task-id tsk_xxx
 	  cloudclaw user-data prune-opencode-runtime
 	  cloudclaw queue-length
 	  cloudclaw container-status

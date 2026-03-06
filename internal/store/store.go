@@ -1062,6 +1062,22 @@ func (s *Store) DequeueTaskResults(limit int) ([]model.TaskResult, error) {
 	return out, nil
 }
 
+func (s *Store) GetTaskResult(taskID string) (model.TaskResult, error) {
+	taskID, err := trimRequired(taskID, "task id")
+	if err != nil {
+		return model.TaskResult{}, err
+	}
+	row := s.db.QueryRow(s.selectTaskResultByTaskIDSQL(), taskID)
+	result, err := scanTaskResult(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.TaskResult{}, fmt.Errorf("task result %s not found", taskID)
+		}
+		return model.TaskResult{}, err
+	}
+	return result, nil
+}
+
 func (s *Store) ensureSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS tasks (
@@ -1268,6 +1284,7 @@ func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskRes
 		r                                        model.TaskResult
 		containerID                              sql.NullString
 		usagePrompt, usageCompletion, usageTotal sql.NullInt64
+		deliveredAt                              sql.NullTime
 	)
 	if err := scanner.Scan(
 		&r.ID,
@@ -1282,11 +1299,16 @@ func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskRes
 		&usageCompletion,
 		&usageTotal,
 		&r.CreatedAt,
+		&deliveredAt,
 	); err != nil {
 		return model.TaskResult{}, err
 	}
 	if containerID.Valid {
 		r.ContainerID = containerID.String
+	}
+	if deliveredAt.Valid {
+		v := deliveredAt.Time.UTC()
+		r.DeliveredAt = &v
 	}
 	if usagePrompt.Valid || usageCompletion.Valid || usageTotal.Valid {
 		r.Usage = &model.TokenUsage{}
@@ -1641,11 +1663,18 @@ ON CONFLICT(task_id) DO NOTHING`
 
 func (s *Store) selectPendingTaskResultsSQL() string {
 	return `SELECT id, task_id, user_id, task_type, container_id, status, error_message, output,
-usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at
+usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
 FROM task_results
 WHERE delivered_at IS NULL
 ORDER BY created_at ASC, id ASC
 LIMIT ` + s.ph(1)
+}
+
+func (s *Store) selectTaskResultByTaskIDSQL() string {
+	return `SELECT id, task_id, user_id, task_type, container_id, status, error_message, output,
+usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
+FROM task_results
+WHERE task_id=` + s.ph(1)
 }
 
 func (s *Store) markTaskResultDeliveredSQL() string {

@@ -106,6 +106,7 @@ type TaskResult struct {
 	Output       string      `json:"output"`
 	Usage        *TokenUsage `json:"usage,omitempty"`
 	CreatedAt    time.Time   `json:"created_at"`
+	DeliveredAt  *time.Time  `json:"delivered_at,omitempty"`
 }
 
 func (c *Client) SubmitTask(req SubmitTaskRequest) (Task, error) {
@@ -201,6 +202,7 @@ func (c *Client) DequeueTaskResults(limit int) ([]TaskResult, error) {
 			ErrorMessage: r.ErrorMessage,
 			Output:       r.Output,
 			CreatedAt:    r.CreatedAt,
+			DeliveredAt:  r.DeliveredAt,
 		}
 		if r.Usage != nil {
 			item.Usage = &TokenUsage{
@@ -212,6 +214,33 @@ func (c *Client) DequeueTaskResults(limit int) ([]TaskResult, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func (c *Client) GetTaskResult(taskID string) (TaskResult, error) {
+	result, err := c.store.GetTaskResult(taskID)
+	if err != nil {
+		return TaskResult{}, err
+	}
+	item := TaskResult{
+		ID:           result.ID,
+		TaskID:       result.TaskID,
+		UserID:       result.UserID,
+		TaskType:     result.TaskType,
+		ContainerID:  result.ContainerID,
+		Status:       string(result.Status),
+		ErrorMessage: result.ErrorMessage,
+		Output:       result.Output,
+		CreatedAt:    result.CreatedAt,
+		DeliveredAt:  result.DeliveredAt,
+	}
+	if result.Usage != nil {
+		item.Usage = &TokenUsage{
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+			TotalTokens:      result.Usage.TotalTokens,
+		}
+	}
+	return item, nil
 }
 
 func toSDKTask(t model.Task) Task {
