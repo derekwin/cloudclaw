@@ -6,8 +6,8 @@
 cd cloudclaw
 export AGENT_RUNTIME=opencode
 
-# 1) 初始化共享配置目录（优先复制宿主 ~/.config/opencode；
-#    若宿主不存在则尝试从镜像提取；失败时写入最小配置骨架）
+# 1) 初始化共享配置目录（优先从宿主 ~/.config/opencode 复制；
+#    如果宿主没有，则在宿主安装 opencode）
 bash deploy/server/cloudclawctl.sh init
 
 # 2) 修改默认模型/Provider 等配置
@@ -23,7 +23,7 @@ bash deploy/server/cloudclawctl.sh up
 - 公共共享配置（所有 opencode 容器共用）：
   - `./cloudclaw_data/shared/opencode`
   - 容器内默认挂载到 `/workspace/.config/opencode`（可用 `OPENCODE_CONFIG_MOUNT_PATH` 覆盖）
-  - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；复制不到再尝试镜像提取；最后兜底最小配置骨架
+  - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；如果宿主没有，则在宿主安装 opencode
 - 用户私有运行时数据：
   - `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/opencode/*`
   - 不直接挂载到容器；任务执行时采用 `runDir` copy-in/copy-out：
