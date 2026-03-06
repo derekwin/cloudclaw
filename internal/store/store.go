@@ -515,6 +515,7 @@ func (s *Store) DequeueForRun(containerID string, leaseDuration time.Duration) (
 		leaseUntil,
 		now,
 		string(model.StatusQueued),
+		string(model.StatusRunning),
 	)
 
 	task, err := scanTask(row)
@@ -1345,9 +1346,13 @@ SET status = ` + s.ph(1) + `,
     lease_until = ` + s.ph(5) + `,
     last_heartbeat_at = ` + s.ph(6) + `
 WHERE id = (
-    SELECT id FROM tasks
-    WHERE status = ` + s.ph(7) + `
-    ORDER BY priority ASC, enqueued_at ASC, created_at ASC
+    SELECT id FROM tasks q
+    WHERE q.status = ` + s.ph(7) + `
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks r
+        WHERE r.user_id = q.user_id AND r.status = ` + s.ph(8) + `
+      )
+    ORDER BY q.priority ASC, q.enqueued_at ASC, q.created_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
@@ -1367,9 +1372,13 @@ SET status = ` + s.ph(1) + `,
     lease_until = ` + s.ph(5) + `,
     last_heartbeat_at = ` + s.ph(6) + `
 WHERE id = (
-    SELECT id FROM tasks
-    WHERE status = ` + s.ph(7) + `
-    ORDER BY priority ASC, enqueued_at ASC, created_at ASC
+    SELECT id FROM tasks q
+    WHERE q.status = ` + s.ph(7) + `
+      AND NOT EXISTS (
+        SELECT 1 FROM tasks r
+        WHERE r.user_id = q.user_id AND r.status = ` + s.ph(8) + `
+      )
+    ORDER BY q.priority ASC, q.enqueued_at ASC, q.created_at ASC
     LIMIT 1
 )
 RETURNING id, user_id, task_type, input, priority, status, attempts, max_retries, container_id,
