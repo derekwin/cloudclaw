@@ -51,8 +51,6 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
-OPENCODE_CONFIG_FILE_ENV="${OPENCODE_CONFIG_FILE:-}"
-OPENCODE_CONFIG_FILE="$CC_HOME/opencode/config/opencode.json"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -63,6 +61,8 @@ RUNNER_DIR="$CC_HOME/runner"
 SHARED_DIR="$CC_HOME/shared"
 SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
 SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
+SHARED_OPENCODE_DIR="$SHARED_DIR/opencode"
+LEGACY_OPENCODE_CONFIG_DIR="$CC_HOME/opencode/config"
 DATA_DIR="$CC_HOME/data"
 USER_RUNTIME_DIR="$CC_HOME/user-runtime"
 USER_RUNTIME_MOUNT_PATH="${USER_RUNTIME_MOUNT_PATH:-/workspace/cloudclaw/user-runtime}"
@@ -118,14 +118,8 @@ load_runtime_profile() {
     opencode)
       RUNTIME_NAME="opencode"
       RUNTIME_EXECUTOR="docker-opencode"
-      if [ -n "$OPENCODE_CONFIG_FILE_ENV" ]; then
-        resolved_override="$(resolve_host_path "$OPENCODE_CONFIG_FILE_ENV")"
-        if [ "$resolved_override" != "$OPENCODE_CONFIG_FILE" ]; then
-          log "ignoring OPENCODE_CONFIG_FILE override: $resolved_override (fixed path: $OPENCODE_CONFIG_FILE)"
-        fi
-      fi
-      RUNTIME_CONFIG_FILE="$(resolve_host_path "$OPENCODE_CONFIG_FILE")"
-      RUNTIME_CONFIG_DIR="$(dirname "$RUNTIME_CONFIG_FILE")"
+      RUNTIME_CONFIG_DIR="$SHARED_OPENCODE_DIR"
+      RUNTIME_CONFIG_FILE="$SHARED_OPENCODE_DIR/opencode.json"
       RUNTIME_CONFIG_MOUNT_PATH="$OPENCODE_CONFIG_MOUNT_PATH"
       RUNTIME_CONFIG_BASENAME="$(basename "$RUNTIME_CONFIG_FILE")"
       DEFAULT_BASE_IMAGE="ghcr.io/anomalyco/opencode:latest"
@@ -208,7 +202,11 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$DATA_DIR" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$DATA_DIR" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  if [ -d "$LEGACY_OPENCODE_CONFIG_DIR" ] && [ -n "$(ls -A "$LEGACY_OPENCODE_CONFIG_DIR" 2>/dev/null)" ] && [ -z "$(ls -A "$SHARED_OPENCODE_DIR" 2>/dev/null)" ]; then
+    cp -R "$LEGACY_OPENCODE_CONFIG_DIR/." "$SHARED_OPENCODE_DIR/" || true
+    log "migrated legacy opencode shared config: $LEGACY_OPENCODE_CONFIG_DIR -> $SHARED_OPENCODE_DIR"
+  fi
 }
 
 ensure_runtime_config_ready() {
@@ -457,11 +455,11 @@ edit_config_hint() {
   if [ "$RUNTIME_NAME" = "opencode" ]; then
     cat <<EOF
 opencode config path:
-  $RUNTIME_CONFIG_FILE
+  $RUNTIME_CONFIG_DIR
 
 CloudClaw maintains this config under CC_HOME by default.
 
-Edit this file to configure sections like:
+Edit files in this directory to configure sections like:
   - model / provider
   - mcp / agent / permission
   - hooks / formatter / linter / theme
@@ -837,7 +835,7 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
-  opencode shared config dir is fixed at: <CC_HOME>/opencode/config
+  opencode shared config dir is fixed at: <CC_HOME>/shared/opencode
   "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.
