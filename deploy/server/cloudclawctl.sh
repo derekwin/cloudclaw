@@ -327,18 +327,22 @@ fi
 echo "unable to generate default opencode config from image" >&2
 exit 1
 ' > "$RUNTIME_CONFIG_FILE.tmp"; then
-    rm -f "$RUNTIME_CONFIG_FILE.tmp"
-    die "failed to generate opencode default config from image: $source_image"
+    log "warning: image did not output a default config, writing minimal config stub"
+    cat > "$RUNTIME_CONFIG_FILE.tmp" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+JSON
   fi
 
 if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
   rm -f "$RUNTIME_CONFIG_FILE.tmp"
-  die "generated config is empty"
+  die "generated config is empty: $RUNTIME_CONFIG_FILE.tmp"
 fi
 
 mv -f "$RUNTIME_CONFIG_FILE.tmp" "$RUNTIME_CONFIG_FILE"
 mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
-log "initialized opencode config from image defaults: $RUNTIME_CONFIG_FILE"
+log "initialized opencode config: $RUNTIME_CONFIG_FILE"
 }
 
 init_claudecode_config_full() {
