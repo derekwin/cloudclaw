@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=opencode:latest
+ARG BASE_IMAGE=ghcr.io/anomalyco/opencode:latest
 FROM ${BASE_IMAGE}
 
 COPY --chmod=0755 run_opencode_task.sh /usr/local/bin/run_opencode_task.sh

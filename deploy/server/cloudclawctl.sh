@@ -121,7 +121,7 @@ load_runtime_profile() {
       RUNTIME_CONFIG_DIR="$(dirname "$RUNTIME_CONFIG_FILE")"
       RUNTIME_CONFIG_MOUNT_PATH="$OPENCODE_CONFIG_MOUNT_PATH"
       RUNTIME_CONFIG_BASENAME="$(basename "$RUNTIME_CONFIG_FILE")"
-      DEFAULT_BASE_IMAGE="opencode:latest"
+      DEFAULT_BASE_IMAGE="ghcr.io/anomalyco/opencode:latest"
       POOL_LABEL="${POOL_LABEL:-app=opencode-agent}"
       POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-opencode-agent}"
       BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
@@ -740,7 +740,7 @@ Environment overrides:
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
-  BASE_IMAGE (runtime default: opencode=opencode:latest, claudecode=claudecode:latest)
+  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, claudecode=claudecode:latest)
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
