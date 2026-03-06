@@ -22,10 +22,10 @@ bash deploy/server/cloudclawctl.sh up
 
 - 公共共享配置（所有 opencode 容器共用）：
   - `./cloudclaw_data/shared/opencode`
-  - 容器内映射为 `~/.config/opencode`
+  - 容器内默认挂载到 `/workspace/.config/opencode`（可用 `OPENCODE_CONFIG_MOUNT_PATH` 覆盖）
   - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；复制不到再尝试镜像提取；最后兜底最小配置骨架
 - 用户私有运行时数据：
-  - `./cloudclaw_data/user-runtime/<normalized_user>/opencode/*`
+  - `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/opencode/*`
   - 不直接挂载到容器；任务执行时采用 `runDir` copy-in/copy-out：
   - `Prepare`：用户私有目录 -> `runDir/.opencode-home/.local/share/opencode`
   - `Persist`：`runDir/.opencode-home/.local/share/opencode` -> 用户私有目录
@@ -80,6 +80,15 @@ bash deploy/server/cloudclawctl.sh result get <task_id>
 - 可选放到私有网络：
   - `CONTAINER_NETWORK=<docker-network-name>`
 - 目录挂载策略：
-  - `./cloudclaw_data/shared/opencode` 挂载到容器 `~/.config/opencode`（只读）
+  - `./cloudclaw_data/shared/opencode` 挂载到容器 `OPENCODE_CONFIG_MOUNT_PATH`（默认 `/workspace/.config/opencode`，只读）
   - `./cloudclaw_data/data/runs` 挂载到容器 `WORKSPACE_MOUNT_PATH`（默认 `/workspace/cloudclaw/runs`）
   - 用户私有目录 `./cloudclaw_data/user-runtime/*` 仅由 runner 在宿主机侧做 copy-in/copy-out
+
+## 关键默认值
+
+- `AGENT_RUNTIME` 必填（`opencode` 或 `claudecode`）
+- `CC_HOME` 默认 `./cloudclaw_data`
+- `up` 实际执行：`install` +（配置缺失时）`init` + `pool start` + `runner start`
+- opencode 默认：
+  - `WORKSPACE_STATE_MODE=ephemeral`
+  - `WORKSPACE_MODE=mount`
