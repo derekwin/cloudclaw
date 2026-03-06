@@ -66,7 +66,9 @@ if [ ! -s "$CLAUDECODE_CONFIG_PATH" ]; then
 fi
 
 default_cfg="$CLAUDECODE_HOME/config.json"
-cp -f "$CLAUDECODE_CONFIG_PATH" "$default_cfg"
+if [ "$CLAUDECODE_CONFIG_PATH" != "$default_cfg" ]; then
+  cp -f "$CLAUDECODE_CONFIG_PATH" "$default_cfg"
+fi
 CLAUDECODE_CONFIG_PATH="$default_cfg"
 export HOME="$CLAUDECODE_HOME"
 
