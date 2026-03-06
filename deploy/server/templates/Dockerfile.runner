@@ -3,3 +3,12 @@ FROM ${BASE_IMAGE}
 
 COPY --chmod=0755 run_opencode_task.sh /usr/local/bin/run_opencode_task.sh
 COPY --chmod=0755 run_claudecode_task.sh /usr/local/bin/run_claudecode_task.sh
+
+# Run as non-root user inside the image.
+RUN addgroup -S cloudclaw && \
+    adduser -S -D -h /home/cloudclaw -G cloudclaw cloudclaw && \
+    mkdir -p /home/cloudclaw /tmp/cloudclaw /workspace && \
+    chown -R cloudclaw:cloudclaw /home/cloudclaw /tmp/cloudclaw /workspace
+
+ENV HOME=/home/cloudclaw
+USER cloudclaw
