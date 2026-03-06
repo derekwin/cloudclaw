@@ -46,6 +46,7 @@ bash deploy/server/cloudclawctl.sh config import /abs/path/opencode.json
 
 Notes:
 - `AGENT_RUNTIME` required: `opencode | claudecode`
+- `result dequeue` now includes `container_id`; `output` is always present (may be empty string)
 - `opencode` uses `OPENCODE_CONFIG_FILE` (default `./cloudclaw_data/opencode/config/opencode.json`)
 - `opencode` per-user private runtime state is stored on host at `./cloudclaw_data/user-runtime/<user_id>/opencode-home`
 - `opencode` `OPENCODE_PERSIST_MODE=auto` by default: if private runtime path is mounted, keep full runtime state there; fallback to minimal pruning only when using in-workspace home

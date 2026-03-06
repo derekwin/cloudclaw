@@ -248,7 +248,7 @@ func (r *Runner) runTask(ctx context.Context, containerID string, task model.Tas
 		r.cfg.Logger.Printf("mark success failed for task %s: %v", task.ID, err)
 		return
 	}
-	r.cfg.Logger.Printf("task %s succeeded", task.ID)
+	r.cfg.Logger.Printf("task %s succeeded on %s (output_len=%d, usage_total=%d)", task.ID, containerID, len(output), usage.TotalTokens)
 }
 
 func readTaskOutput(runDir string) string {
