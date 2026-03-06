@@ -2,7 +2,7 @@
 set -euo pipefail
 
 COUNT="${1:-3}"
-IMAGE="${2:-opencode:latest}"
+IMAGE="${2:-ghcr.io/anomalyco/opencode:latest}"
 NAME_PREFIX="${3:-opencode-agent}"
 LABEL="${4:-app=opencode-agent}"
 

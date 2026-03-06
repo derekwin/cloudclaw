@@ -32,7 +32,7 @@ type commonStoreFlags struct {
 const (
 	defaultK8sLabelSelector    = "app=opencode-agent"
 	defaultDockerLabelSelector = "app=opencode-agent"
-	defaultDockerImage         = "opencode:latest"
+	defaultDockerImage         = "ghcr.io/anomalyco/opencode:latest"
 	defaultDockerNamePrefix    = "opencode-agent"
 )
 

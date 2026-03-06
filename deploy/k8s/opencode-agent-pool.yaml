@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: opencode-agent
-          image: opencode:latest
+          image: ghcr.io/anomalyco/opencode:latest
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-lc", "sleep infinity"]
           resources:
