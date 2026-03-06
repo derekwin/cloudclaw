@@ -164,14 +164,6 @@ func (s *Store) BaseDir() string {
 	return s.baseDir
 }
 
-func (s *Store) UserDataDir(userID string) string {
-	return filepath.Join(s.baseDir, "users", userID, "data")
-}
-
-func (s *Store) UserSnapshotBaseDir(userID string) string {
-	return filepath.Join(s.baseDir, "snapshots", userID)
-}
-
 func (s *Store) RunDir(taskID string, attempt int) string {
 	return filepath.Join(s.baseDir, "runs", fmt.Sprintf("%s-attempt-%d", taskID, attempt))
 }
@@ -203,6 +195,11 @@ func (s *Store) ReplaceUserDataFromDir(userID, srcDir string) error {
 	if _, err := tx.Exec("DELETE FROM user_data_files WHERE user_id="+s.ph(1), userID); err != nil {
 		return err
 	}
+	insertStmt, err := tx.Prepare(s.insertUserDataSQL())
+	if err != nil {
+		return err
+	}
+	defer insertStmt.Close()
 
 	var totalBytes int64
 	if err := filepath.WalkDir(srcDir, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -239,8 +236,7 @@ func (s *Store) ReplaceUserDataFromDir(userID, srcDir string) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(
-			s.insertUserDataSQL(),
+		_, err = insertStmt.Exec(
 			userID,
 			rel,
 			int64(fileInfo.Mode().Perm()),
@@ -296,6 +292,50 @@ func (s *Store) RestoreUserDataToDir(userID, dstDir string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) PruneOpencodeRuntimeArtifacts() (int64, error) {
+	prefixes := []string{
+		".opencode-home/.local/share/opencode/bin/",
+		".opencode-home/.local/share/opencode/log/",
+		".opencode-home/.local/share/opencode/snapshot/",
+		".opencode-home/.local/share/opencode/storage/",
+		".opencode-home/.local/share/opencode/tool-output/",
+	}
+	exact := []string{
+		".opencode-home/.local/share/opencode/opencode.db-shm",
+		".opencode-home/.local/share/opencode/opencode.db-wal",
+	}
+
+	var (
+		conds []string
+		args  []any
+		idx   = 1
+	)
+	for _, p := range prefixes {
+		conds = append(conds, "path LIKE "+s.ph(idx))
+		args = append(args, p+"%")
+		idx++
+	}
+	for _, p := range exact {
+		conds = append(conds, "path = "+s.ph(idx))
+		args = append(args, p)
+		idx++
+	}
+	if len(conds) == 0 {
+		return 0, nil
+	}
+
+	query := "DELETE FROM user_data_files WHERE " + strings.Join(conds, " OR ")
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return affected, nil
 }
 
 func (s *Store) SubmitTask(in SubmitTaskInput) (model.Task, error) {

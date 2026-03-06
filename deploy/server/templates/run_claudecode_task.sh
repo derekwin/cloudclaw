@@ -18,11 +18,27 @@ CLAUDECODE_TIMEOUT_SECONDS="${CLAUDECODE_TIMEOUT_SECONDS:-}"
 
 TASK_HOME="$(dirname "$CLOUDCLAW_WORKSPACE")"
 SHARED_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}"
+TMP_ROOT="${TMPDIR:-/tmp}"
+output_json=""
+gateway_log=""
+
+mkdir -p "$TMP_ROOT"
+
+cleanup() {
+  if [ -n "$output_json" ] && [ -f "$output_json" ]; then
+    rm -f "$output_json"
+  fi
+  if [ -n "$gateway_log" ] && [ -f "$gateway_log" ]; then
+    rm -f "$gateway_log"
+  fi
+}
+trap cleanup EXIT INT TERM
 
 mkdir -p "$CLOUDCLAW_WORKSPACE" "$TASK_HOME"
+gateway_log="$(mktemp "$TMP_ROOT/claudecode-gateway.XXXXXX.log")"
 
 SHARED_WORKSPACE="$SHARED_DIR"
-if [ -d "$SHARED_DIR/workspace" ]; then
+if [ -n "$SHARED_DIR" ] && [ -d "$SHARED_DIR/workspace" ]; then
   SHARED_WORKSPACE="$SHARED_DIR/workspace"
 fi
 
@@ -70,7 +86,7 @@ ensure_gateway() {
   fi
 
   CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" \
-    claudecode gateway --bind "$CLAUDECODE_GATEWAY_BIND" --port "$CLAUDECODE_GATEWAY_PORT" >"$TASK_HOME/claudecode-gateway.log" 2>&1 &
+    claudecode gateway --bind "$CLAUDECODE_GATEWAY_BIND" --port "$CLAUDECODE_GATEWAY_PORT" >"$gateway_log" 2>&1 &
 
   for _ in $(seq 1 10); do
     if claudecode_health; then
@@ -98,7 +114,7 @@ if [ -n "$CLAUDECODE_TIMEOUT_SECONDS" ]; then
   set -- "$@" --timeout "$CLAUDECODE_TIMEOUT_SECONDS"
 fi
 
-output_json="$TASK_HOME/claudecode-output.json"
+output_json="$(mktemp "$TMP_ROOT/claudecode-output.XXXXXX.json")"
 if ! CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" "$@" >"$output_json"; then
   echo "claudecode agent command failed" >&2
   exit 1
