@@ -131,6 +131,7 @@ func runCmd(args []string) error {
 		SharedSkillsDir:  strings.TrimSpace(*sharedSkillsDir),
 		SharedSkillsMode: strings.TrimSpace(*sharedSkillsMode),
 		WorkspaceState:   strings.TrimSpace(*workspaceStateMode),
+		RuntimeName:      runtimeNameForExecutor(*executorMode),
 		UserRuntimeDir:   strings.TrimSpace(*userRuntimeDir),
 	})
 	if err != nil {
@@ -519,6 +520,14 @@ func workspaceContainerDirForDocker(mode, mountPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(mountPath)
+}
+
+func runtimeNameForExecutor(executorMode string) string {
+	mode := strings.ToLower(strings.TrimSpace(executorMode))
+	if strings.Contains(mode, "claudecode") {
+		return "claudecode"
+	}
+	return "opencode"
 }
 
 func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix *string) {

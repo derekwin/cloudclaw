@@ -24,6 +24,7 @@ type LocalManagerConfig struct {
 	SharedSkillsDir  string
 	SharedSkillsMode string // copy | mount
 	WorkspaceState   string // db | ephemeral (alias: none)
+	RuntimeName      string // opencode | claudecode
 	UserRuntimeDir   string // host dir to persist per-user runtime state for ephemeral mode
 }
 
@@ -32,6 +33,7 @@ type LocalManager struct {
 	sharedSkillsDir  string
 	sharedSkillsMode string
 	workspaceState   string
+	runtimeName      string
 	userRuntimeDir   string
 }
 
@@ -44,6 +46,7 @@ func NewLocalManager(cfg LocalManagerConfig) (*LocalManager, error) {
 		sharedSkillsDir:  cfg.SharedSkillsDir,
 		sharedSkillsMode: normalizeSharedSkillsMode(cfg.SharedSkillsMode),
 		workspaceState:   normalizeWorkspaceStateMode(cfg.WorkspaceState),
+		runtimeName:      normalizeRuntimeName(cfg.RuntimeName),
 		userRuntimeDir:   strings.TrimSpace(cfg.UserRuntimeDir),
 	}, nil
 }
@@ -89,6 +92,15 @@ func normalizeWorkspaceStateMode(mode string) string {
 	}
 }
 
+func normalizeRuntimeName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "claudecode":
+		return "claudecode"
+	default:
+		return "opencode"
+	}
+}
+
 func (m *LocalManager) Persist(task model.Task, runDir string) error {
 	if m.workspaceState != "db" {
 		if err := m.persistRunDirRuntimeToUser(task.UserID, runDir); err != nil {
@@ -101,7 +113,12 @@ func (m *LocalManager) Persist(task model.Task, runDir string) error {
 	if m.sharedSkillsMode == "copy" {
 		_ = os.RemoveAll(filepath.Join(runDir, ".cloudclaw_shared_skills"))
 	}
-	if err := pruneRuntimeArtifacts(runDir); err != nil {
+	if m.runtimeName == "opencode" {
+		if err := pruneOpencodeRuntimeArtifacts(runDir); err != nil {
+			return err
+		}
+	}
+	if err := m.pruneRuntimeArtifacts(runDir); err != nil {
 		return err
 	}
 
@@ -116,7 +133,7 @@ func (m *LocalManager) restoreUserRuntimeToRunDir(userID, runDir string) error {
 	if m.userRuntimeDir == "" {
 		return nil
 	}
-	src := m.userRuntimeOpencodeDir(userID)
+	src := m.userRuntimeRuntimeDir(userID)
 	info, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -127,7 +144,7 @@ func (m *LocalManager) restoreUserRuntimeToRunDir(userID, runDir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("user runtime path is not directory: %s", src)
 	}
-	dst := opencodeRunStateDir(runDir)
+	dst := m.runtimeStateDir(runDir)
 	if err := fsutil.RemoveAndRecreate(dst); err != nil {
 		return err
 	}
@@ -138,8 +155,8 @@ func (m *LocalManager) persistRunDirRuntimeToUser(userID, runDir string) error {
 	if m.userRuntimeDir == "" {
 		return nil
 	}
-	src := opencodeRunStateDir(runDir)
-	dest := m.userRuntimeOpencodeDir(userID)
+	src := m.runtimeStateDir(runDir)
+	dest := m.userRuntimeRuntimeDir(userID)
 	info, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -149,7 +166,7 @@ func (m *LocalManager) persistRunDirRuntimeToUser(userID, runDir string) error {
 		return err
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("run dir opencode state path is not directory: %s", src)
+		return fmt.Errorf("run dir runtime state path is not directory: %s", src)
 	}
 	if err := fsutil.RemoveAndRecreate(dest); err != nil {
 		return err
@@ -157,12 +174,15 @@ func (m *LocalManager) persistRunDirRuntimeToUser(userID, runDir string) error {
 	return fsutil.CopyDir(src, dest)
 }
 
-func (m *LocalManager) userRuntimeOpencodeDir(userID string) string {
+func (m *LocalManager) userRuntimeRuntimeDir(userID string) string {
 	normalized := safeUserRuntimeName(userID)
-	return filepath.Join(m.userRuntimeDir, normalized, "opencode")
+	return filepath.Join(m.userRuntimeDir, normalized, m.runtimeName)
 }
 
-func opencodeRunStateDir(runDir string) string {
+func (m *LocalManager) runtimeStateDir(runDir string) string {
+	if m.runtimeName == "claudecode" {
+		return filepath.Join(runDir, ".claudecode-home")
+	}
 	return filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
 }
 
@@ -182,7 +202,7 @@ func safeUserRuntimeName(userID string) string {
 	return fmt.Sprintf("%s-%d", base, sum)
 }
 
-func pruneRuntimeArtifacts(runDir string) error {
+func pruneOpencodeRuntimeArtifacts(runDir string) error {
 	opencodeStateDir := filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
 	for _, name := range []string{
 		"bin",
@@ -201,6 +221,14 @@ func pruneRuntimeArtifacts(runDir string) error {
 		}
 	}
 	return nil
+}
+
+func (m *LocalManager) pruneRuntimeArtifacts(runDir string) error {
+	if m.runtimeName != "claudecode" {
+		return nil
+	}
+	// Do not persist shared config copy into DB snapshots in claudecode db mode.
+	return os.RemoveAll(filepath.Join(runDir, ".claudecode-home", "config.json"))
 }
 
 func (m *LocalManager) syncSharedSkills(runDir string) error {

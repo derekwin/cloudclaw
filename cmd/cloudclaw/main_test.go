@@ -67,3 +67,15 @@ func TestApplyExecutorRuntimeDefaultsForOpencodeNoChange(t *testing.T) {
 		t.Fatalf("unexpected docker name prefix: %s", dockerNamePrefix)
 	}
 }
+
+func TestRuntimeNameForExecutor(t *testing.T) {
+	if got := runtimeNameForExecutor("docker-opencode"); got != "opencode" {
+		t.Fatalf("unexpected runtime for docker-opencode: %s", got)
+	}
+	if got := runtimeNameForExecutor("k8s-claudecode"); got != "claudecode" {
+		t.Fatalf("unexpected runtime for k8s-claudecode: %s", got)
+	}
+	if got := runtimeNameForExecutor(""); got != "opencode" {
+		t.Fatalf("unexpected default runtime: %s", got)
+	}
+}

@@ -5,8 +5,8 @@ set -eu
 : "${CLOUDCLAW_INPUT:?missing CLOUDCLAW_INPUT}"
 : "${CLOUDCLAW_USAGE_FILE:?missing CLOUDCLAW_USAGE_FILE}"
 
-CLAUDECODE_HOME="${CLAUDECODE_HOME:-/workspace/.claudecode}"
-CLAUDECODE_CONFIG_PATH="${CLAUDECODE_CONFIG_PATH:-$CLAUDECODE_HOME/config.json}"
+CLAUDECODE_HOME="${CLAUDECODE_HOME:-}"
+CLAUDECODE_CONFIG_PATH="${CLAUDECODE_CONFIG_PATH:-/workspace/.claudecode/config.json}"
 CLAUDECODE_EXEC_MODE="$(printf '%s' "${CLAUDECODE_EXEC_MODE:-gateway}" | tr '[:upper:]' '[:lower:]')"
 CLAUDECODE_SESSION_ID="${CLAUDECODE_SESSION_ID:-cloudclaw-${CLOUDCLAW_TASK_ID:-task}}"
 CLAUDECODE_GATEWAY_BIND="${CLAUDECODE_GATEWAY_BIND:-loopback}"
@@ -34,7 +34,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$CLOUDCLAW_WORKSPACE" "$TASK_HOME"
+runtime_home_default="$CLOUDCLAW_WORKSPACE/.claudecode-home"
+if [ -z "${CLAUDECODE_HOME:-}" ]; then
+  CLAUDECODE_HOME="$runtime_home_default"
+fi
+
+mkdir -p "$CLOUDCLAW_WORKSPACE" "$TASK_HOME" "$CLAUDECODE_HOME"
 gateway_log="$(mktemp -p "$TMP_ROOT" claudecode-gateway.XXXXXX)"
 
 SHARED_WORKSPACE="$SHARED_DIR"
@@ -60,11 +65,10 @@ if [ ! -s "$CLAUDECODE_CONFIG_PATH" ]; then
   exit 1
 fi
 
-mkdir -p "$CLAUDECODE_HOME"
 default_cfg="$CLAUDECODE_HOME/config.json"
-if [ "$CLAUDECODE_CONFIG_PATH" != "$default_cfg" ]; then
-  cp -f "$CLAUDECODE_CONFIG_PATH" "$default_cfg"
-fi
+cp -f "$CLAUDECODE_CONFIG_PATH" "$default_cfg"
+CLAUDECODE_CONFIG_PATH="$default_cfg"
+export HOME="$CLAUDECODE_HOME"
 
 claudecode_health() {
   if [ -n "$CLAUDECODE_GATEWAY_TOKEN" ]; then
