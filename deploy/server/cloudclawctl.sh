@@ -46,6 +46,7 @@ PICO_API_KEY="${PICO_API_KEY:-${OPENROUTER_API_KEY:-}}"
 PICO_REQUEST_TIMEOUT="${PICO_REQUEST_TIMEOUT:-300}"
 PICOCLAW_CONFIG_SOURCE="${PICOCLAW_CONFIG_SOURCE:-}"
 PICOCLAW_CONFIG_MOUNT_PATH="${PICOCLAW_CONFIG_MOUNT_PATH:-/workspace/.picoclaw}"
+PICOCLAW_CONFIG_RESET="${PICOCLAW_CONFIG_RESET:-0}"
 OWNER_UID="${PICOCLAW_OWNER_UID:-${SUDO_UID:-$(id -u)}}"
 OWNER_GID="${PICOCLAW_OWNER_GID:-${SUDO_GID:-$(id -g)}}"
 
@@ -63,8 +64,21 @@ log() {
   printf '[cloudclawctl] %s\n' "$*"
 }
 
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "missing command: $1" >&2; exit 1; }
+}
+
+require_arg() {
+  local name="$1"
+  local value="${2:-}"
+  if [ -z "$value" ]; then
+    die "missing argument: $name"
+  fi
 }
 
 runner_image_exists() {
@@ -134,6 +148,7 @@ render_managed_picoclaw_config() {
   "agents": {
     "defaults": {
       "model_name": "${model_name_esc}",
+      "model": "${model_name_esc}",
       "workspace": "./workspace",
       "max_tokens": 8192,
       "temperature": 0.7,
@@ -143,6 +158,7 @@ render_managed_picoclaw_config() {
   "model_list": [
     {
       "model_name": "${model_name_esc}",
+      "name": "${model_name_esc}",
       "model": "${model_esc}",
       "request_timeout": ${PICO_REQUEST_TIMEOUT}${api_base_json}${api_key_json}
     }
@@ -154,6 +170,11 @@ EOF
 
 prepare_picoclaw_config() {
   ensure_dirs
+  if [ "$PICOCLAW_CONFIG_RESET" = "1" ]; then
+    rm -f "$SHARED_PICO_CONFIG"
+    log "reset managed/shared picoclaw config"
+  fi
+
   if [ -n "${PICOCLAW_CONFIG_SOURCE:-}" ]; then
     if [ ! -f "$PICOCLAW_CONFIG_SOURCE" ]; then
       echo "PICOCLAW_CONFIG_SOURCE not found: $PICOCLAW_CONFIG_SOURCE" >&2
@@ -161,10 +182,89 @@ prepare_picoclaw_config() {
     fi
     cp "$PICOCLAW_CONFIG_SOURCE" "$SHARED_PICO_CONFIG"
     log "using external picoclaw config: $PICOCLAW_CONFIG_SOURCE"
-  else
-    render_managed_picoclaw_config
-    log "generated managed picoclaw config: $SHARED_PICO_CONFIG"
+    return
   fi
+
+  if [ -s "$SHARED_PICO_CONFIG" ]; then
+    log "reusing existing picoclaw config: $SHARED_PICO_CONFIG"
+    return
+  fi
+
+  render_managed_picoclaw_config
+  log "generated managed picoclaw config: $SHARED_PICO_CONFIG"
+}
+
+show_config_path() {
+  ensure_dirs
+  echo "$SHARED_PICO_CONFIG"
+}
+
+show_config() {
+  ensure_dirs
+  if [ ! -f "$SHARED_PICO_CONFIG" ]; then
+    echo "config not found: $SHARED_PICO_CONFIG" >&2
+    exit 1
+  fi
+  cat "$SHARED_PICO_CONFIG"
+}
+
+import_config() {
+  local src="$1"
+  require_arg "<path-to-config.json>" "$src"
+  ensure_dirs
+  if [ ! -f "$src" ]; then
+    die "config source not found: $src"
+  fi
+  cp "$src" "$SHARED_PICO_CONFIG"
+  log "imported picoclaw config: $src -> $SHARED_PICO_CONFIG"
+}
+
+reset_config() {
+  ensure_dirs
+  if [ -f "$SHARED_PICO_CONFIG" ]; then
+    cp "$SHARED_PICO_CONFIG" "$SHARED_PICO_CONFIG.bak"
+    log "backup created: $SHARED_PICO_CONFIG.bak"
+  fi
+  render_managed_picoclaw_config
+  log "reset to managed config: $SHARED_PICO_CONFIG"
+}
+
+edit_config() {
+  ensure_dirs
+  if [ ! -f "$SHARED_PICO_CONFIG" ]; then
+    render_managed_picoclaw_config
+  fi
+  editor="${EDITOR:-vi}"
+  if ! command -v "$editor" >/dev/null 2>&1; then
+    die "editor not found: $editor (set EDITOR to a valid command)"
+  fi
+  "$editor" "$SHARED_PICO_CONFIG"
+}
+
+edit_config_hint() {
+  ensure_dirs
+  cat <<EOF
+picoclaw config path:
+  $SHARED_PICO_CONFIG
+
+Edit this file to configure full sections like:
+  - model_list / providers
+  - tools (mcp / skills / web / exec ...)
+  - channels / heartbeat / gateway
+
+Then run:
+  bash $0 pool start
+EOF
+}
+
+print_runtime_config_paths() {
+  ensure_dirs
+  cat <<EOF
+shared picoclaw config:
+  $SHARED_PICO_CONFIG
+container mount path:
+  ${PICOCLAW_CONFIG_MOUNT_PATH}/config.json
+EOF
 }
 
 install_all() {
@@ -254,6 +354,17 @@ stop_pool() {
   docker rm -f $ids >/dev/null
 }
 
+restart_pool() {
+  stop_pool
+  start_pool
+}
+
+status_pool() {
+  need_cmd docker
+  echo "  containers:"
+  docker ps --filter "label=$POOL_LABEL" --format '    - {{.Names}} | {{.Status}} | {{.Image}}' || true
+}
+
 start_cloudclaw() {
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
@@ -304,6 +415,20 @@ stop_cloudclaw() {
   rm -f "$PID_FILE"
 }
 
+restart_cloudclaw() {
+  stop_cloudclaw
+  start_cloudclaw
+}
+
+runner_logs() {
+  ensure_dirs
+  lines="${1:-100}"
+  if [ ! -f "$LOG_DIR/cloudclaw.log" ]; then
+    die "log file not found: $LOG_DIR/cloudclaw.log"
+  fi
+  tail -n "$lines" "$LOG_DIR/cloudclaw.log"
+}
+
 status_all() {
   log "cloudclaw status"
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -312,8 +437,8 @@ status_all() {
     echo "  runner: stopped"
   fi
 
-  echo "  containers:"
-  docker ps --filter "label=$POOL_LABEL" --format '    - {{.Names}} | {{.Status}} | {{.Image}}' || true
+  status_pool
+  echo "  config: $SHARED_PICO_CONFIG"
 }
 
 smoke() {
@@ -352,19 +477,36 @@ smoke() {
 
 usage() {
   cat <<USAGE
-Usage: $0 <command>
+Usage:
+  $0 <group> <action> [args]
+  $0 <shortcut>
 
-Commands:
-  install      Build cloudclaw binary + build picoclaw runner image
-  set-home     Persist cloudclaw home directory (absolute or repo-relative)
-  start-pool   Start docker picoclaw pool
-  stop-pool    Stop/remove docker picoclaw pool
-  start        Start cloudclaw runner daemon
-  stop         Stop cloudclaw runner daemon
-  status       Show cloudclaw + pool status
-  smoke        Submit one smoke task and wait result
-  up           install + start-pool + start
-  down         stop + stop-pool
+Groups:
+  home   set <path> | show
+  config path | show | edit | import <file> | reset | help
+  pool   start | stop | restart | status
+  runner start | stop | restart | status | logs [lines]
+
+Shortcuts:
+  install     Build cloudclaw binary + runner image
+  up          install + pool start + runner start
+  down        runner stop + pool stop
+  restart     down + up
+  status      Show runner + pool + config status
+  smoke       Submit one smoke task and wait result
+  help        Show this help
+
+Legacy aliases (compatible):
+  set-home <path>, config-path, show-config, config-help
+  start-pool, stop-pool, start, stop
+
+Examples:
+  $0 home set /data/cloudclaw
+  $0 config import /path/full-config.json
+  $0 config edit
+  $0 pool restart
+  $0 runner logs 200
+  $0 smoke
 
 Environment overrides:
   CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
@@ -382,6 +524,7 @@ Environment overrides:
   PICO_API_KEY (optional for ollama/vllm local, usually required for cloud providers)
   PICO_REQUEST_TIMEOUT (default: 300)
   PICOCLAW_CONFIG_SOURCE (optional; use existing config.json as source of truth)
+  PICOCLAW_CONFIG_RESET (default: 0; set 1 to regenerate managed config)
   PICOCLAW_CONFIG_MOUNT_PATH (default: /workspace/.picoclaw in container)
   OPENROUTER_API_KEY / OPENROUTER_MODEL (legacy compatibility)
   DOCKER_TASK_CMD (default: run_picoclaw_task.sh)
@@ -389,60 +532,129 @@ Environment overrides:
 
 Notes:
   pool startup always refreshes containers to avoid stale config/env drift.
-  cloudclaw task execution reads model/provider settings from mounted picoclaw config.
+  cloudclaw task execution reads from mounted picoclaw config (full config supported).
+  if \$CC_HOME/shared/picoclaw/config.json exists, start-pool will reuse it (won't overwrite).
 USAGE
 }
 
-cmd="${1:-}"
-arg1="${2:-}"
-case "$cmd" in
-  install)
-    install_all
-    ;;
-  set-home)
-    if [ -z "$arg1" ]; then
-      echo "usage: $0 set-home <path>" >&2
-      exit 1
-    fi
-    mkdir -p "$(dirname "$CC_HOME_FILE")"
-    printf '%s\n' "$arg1" > "$CC_HOME_FILE"
-    resolved="$(resolve_home_path "$arg1")"
-    mkdir -p "$resolved"
-    log "saved CC_HOME path: $arg1 (resolved: $resolved)"
-    ;;
-  start-pool)
-    start_pool
-    ;;
-  stop-pool)
-    stop_pool
-    ;;
-  start)
-    start_cloudclaw
-    ;;
-  stop)
-    stop_cloudclaw
-    ;;
-  status)
-    status_all
-    ;;
-  smoke)
-    smoke
-    ;;
-  up)
-    install_all
-    start_pool
-    start_cloudclaw
-    ;;
-  down)
-    stop_cloudclaw
-    stop_pool
-    ;;
-  help|--help|-h|"")
-    usage
-    ;;
-  *)
-    echo "unknown command: $cmd" >&2
-    usage
-    exit 1
-    ;;
-esac
+set_home() {
+  local raw_path="$1"
+  require_arg "<path>" "$raw_path"
+  mkdir -p "$(dirname "$CC_HOME_FILE")"
+  printf '%s\n' "$raw_path" > "$CC_HOME_FILE"
+  resolved="$(resolve_home_path "$raw_path")"
+  mkdir -p "$resolved"
+  log "saved CC_HOME path: $raw_path (resolved: $resolved)"
+}
+
+cmd_home() {
+  local action="${1:-show}"
+  local arg="${2:-}"
+  case "$action" in
+    set) set_home "$arg" ;;
+    show) echo "$CC_HOME" ;;
+    *) die "unknown home action: $action (use: set|show)" ;;
+  esac
+}
+
+cmd_config() {
+  local action="${1:-help}"
+  local arg="${2:-}"
+  case "$action" in
+    path) show_config_path ;;
+    show) show_config ;;
+    edit) edit_config ;;
+    import) import_config "$arg" ;;
+    reset) reset_config ;;
+    help)
+      edit_config_hint
+      print_runtime_config_paths
+      ;;
+    *)
+      die "unknown config action: $action (use: path|show|edit|import|reset|help)"
+      ;;
+  esac
+}
+
+cmd_pool() {
+  local action="${1:-status}"
+  case "$action" in
+    start) start_pool ;;
+    stop) stop_pool ;;
+    restart) restart_pool ;;
+    status) status_pool ;;
+    *) die "unknown pool action: $action (use: start|stop|restart|status)" ;;
+  esac
+}
+
+cmd_runner() {
+  local action="${1:-status}"
+  local arg="${2:-}"
+  case "$action" in
+    start) start_cloudclaw ;;
+    stop) stop_cloudclaw ;;
+    restart) restart_cloudclaw ;;
+    status) status_all ;;
+    logs) runner_logs "$arg" ;;
+    *) die "unknown runner action: $action (use: start|stop|restart|status|logs)" ;;
+  esac
+}
+
+cmd_shortcut() {
+  local action="${1:-help}"
+  local arg1="${2:-}"
+  local arg2="${3:-}"
+  case "$action" in
+    install) install_all ;;
+    up)
+      install_all
+      start_pool
+      start_cloudclaw
+      ;;
+    down)
+      stop_cloudclaw
+      stop_pool
+      ;;
+    restart)
+      stop_cloudclaw
+      stop_pool
+      install_all
+      start_pool
+      start_cloudclaw
+      ;;
+    status) status_all ;;
+    smoke) smoke ;;
+    help|--help|-h|"") usage ;;
+    # legacy aliases
+    set-home) set_home "$arg1" ;;
+    config-path) show_config_path ;;
+    show-config) show_config ;;
+    config-help)
+      edit_config_hint
+      print_runtime_config_paths
+      ;;
+    start-pool) start_pool ;;
+    stop-pool) stop_pool ;;
+    start) start_cloudclaw ;;
+    stop) stop_cloudclaw ;;
+    *)
+      die "unknown command: $action (run: $0 help)"
+      ;;
+  esac
+  _unused="$arg2"
+}
+
+main() {
+  local group="${1:-help}"
+  local action="${2:-}"
+  local arg="${3:-}"
+  case "$group" in
+    home) cmd_home "$action" "$arg" ;;
+    config) cmd_config "$action" "$arg" ;;
+    pool) cmd_pool "$action" ;;
+    runner) cmd_runner "$action" "$arg" ;;
+    *) cmd_shortcut "$group" "$action" "$arg" ;;
+  esac
+}
+
+main "${1:-}" "${2:-}" "${3:-}"
