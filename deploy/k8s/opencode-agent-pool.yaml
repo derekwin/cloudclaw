@@ -1,22 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: picoclaw-agent-pool
+  name: opencode-agent-pool
   labels:
-    app: picoclaw-agent
+    app: opencode-agent
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: picoclaw-agent
+      app: opencode-agent
   template:
     metadata:
       labels:
-        app: picoclaw-agent
+        app: opencode-agent
     spec:
       containers:
-        - name: picoclaw-agent
-          image: ghcr.io/sipeed/picoclaw:latest
+        - name: opencode-agent
+          image: opencode:latest
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-lc", "sleep infinity"]
           resources:

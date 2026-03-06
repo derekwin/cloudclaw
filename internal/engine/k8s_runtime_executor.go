@@ -10,18 +10,18 @@ import (
 	"cloudclaw/internal/model"
 )
 
-type K8sPicoclawExecutor struct {
+type K8sRuntimeExecutor struct {
 	Kubectl         k8sutil.Kubectl
 	RemoteBaseDir   string
 	TaskCommand     string
 	SharedSkillsDir string
 }
 
-func (e *K8sPicoclawExecutor) Name() string {
-	return "k8s-picoclaw"
+func (e *K8sRuntimeExecutor) Name() string {
+	return "k8s-runtime"
 }
 
-func (e *K8sPicoclawExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
+func (e *K8sRuntimeExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
 	if strings.TrimSpace(containerID) == "" {
 		return model.TokenUsage{}, fmt.Errorf("container id is required for k8s executor")
 	}
@@ -63,6 +63,6 @@ func (e *K8sPicoclawExecutor) Execute(ctx context.Context, containerID string, t
 	return resolveUsage(workspaceDir, task), nil
 }
 
-func (e *K8sPicoclawExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
+func (e *K8sRuntimeExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
 	return renderTaskCommand(task, e.TaskCommand, layout, e.SharedSkillsDir)
 }

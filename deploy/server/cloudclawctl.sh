@@ -20,6 +20,18 @@ resolve_home_path() {
   esac
 }
 
+resolve_host_path() {
+  local raw="$1"
+  case "$raw" in
+    "~") raw="$HOME" ;;
+    "~/"*) raw="$HOME/${raw#~/}" ;;
+  esac
+  case "$raw" in
+    /*) printf '%s\n' "$raw" ;;
+    *) printf '%s/%s\n' "$REPO_ROOT" "$raw" ;;
+  esac
+}
+
 if [ -n "${CC_HOME:-}" ]; then
   CC_HOME="$(resolve_home_path "$CC_HOME")"
 elif [ -f "$CC_HOME_FILE" ]; then
@@ -39,18 +51,17 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
-PICOCLAW_CONFIG_MOUNT_PATH="${PICOCLAW_CONFIG_MOUNT_PATH:-/workspace/.picoclaw}"
-OPENCLAW_CONFIG_MOUNT_PATH="${OPENCLAW_CONFIG_MOUNT_PATH:-/workspace/.openclaw}"
-OWNER_UID="${AGENT_OWNER_UID:-${PICOCLAW_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
-OWNER_GID="${AGENT_OWNER_GID:-${PICOCLAW_OWNER_GID:-${SUDO_GID:-$(id -g)}}}"
+OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$HOME/.config/opencode/opencode.json}"
+OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.opencode}"
+CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
+OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
+OWNER_GID="${AGENT_OWNER_GID:-${OPENCODE_OWNER_GID:-${SUDO_GID:-$(id -g)}}}"
 
 CLOUDCLAW_BIN="$CC_HOME/bin/cloudclaw"
 RUNNER_DIR="$CC_HOME/runner"
 SHARED_DIR="$CC_HOME/shared"
-SHARED_PICO_DIR="$SHARED_DIR/picoclaw"
-SHARED_PICO_CONFIG="$SHARED_PICO_DIR/config.json"
-SHARED_OPENCLAW_DIR="$SHARED_DIR/openclaw"
-SHARED_OPENCLAW_CONFIG="$SHARED_OPENCLAW_DIR/openclaw.json"
+SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
+SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
 DATA_DIR="$CC_HOME/data"
 LOG_DIR="$CC_HOME/logs"
 RUN_DIR="$CC_HOME/run"
@@ -88,7 +99,7 @@ require_arg() {
 
 require_runtime() {
   if [ -z "$AGENT_RUNTIME" ]; then
-    die "AGENT_RUNTIME is required (picoclaw|openclaw)"
+    die "AGENT_RUNTIME is required (opencode|claudecode)"
   fi
 }
 
@@ -101,37 +112,36 @@ load_runtime_profile() {
   local runtime
   runtime="$(printf '%s' "$AGENT_RUNTIME" | tr '[:upper:]' '[:lower:]')"
   case "$runtime" in
-    picoclaw)
-      RUNTIME_NAME="picoclaw"
-      RUNTIME_EXECUTOR="docker-picoclaw"
-      RUNTIME_CONFIG_DIR="$SHARED_PICO_DIR"
-      RUNTIME_CONFIG_FILE="$SHARED_PICO_CONFIG"
-      RUNTIME_CONFIG_MOUNT_PATH="$PICOCLAW_CONFIG_MOUNT_PATH"
-      RUNTIME_CONFIG_BASENAME="config.json"
-      DEFAULT_BASE_IMAGE="docker.io/sipeed/picoclaw:latest"
-      POOL_LABEL="${POOL_LABEL:-app=picoclaw-agent}"
-      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-picoclaw-agent}"
+    opencode)
+      RUNTIME_NAME="opencode"
+      RUNTIME_EXECUTOR="docker-opencode"
+      RUNTIME_CONFIG_FILE="$(resolve_host_path "$OPENCODE_CONFIG_FILE")"
+      RUNTIME_CONFIG_DIR="$(dirname "$RUNTIME_CONFIG_FILE")"
+      RUNTIME_CONFIG_MOUNT_PATH="$OPENCODE_CONFIG_MOUNT_PATH"
+      RUNTIME_CONFIG_BASENAME="$(basename "$RUNTIME_CONFIG_FILE")"
+      DEFAULT_BASE_IMAGE="opencode:latest"
+      POOL_LABEL="${POOL_LABEL:-app=opencode-agent}"
+      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-opencode-agent}"
       BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
-      FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-ghcr.io/sipeed/picoclaw:latest}"
-      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/picoclaw-runner:latest}"
-      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_picoclaw_task.sh}"
+      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/opencode-runner:latest}"
+      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_opencode_task.sh}"
       ;;
-    openclaw)
-      RUNTIME_NAME="openclaw"
-      RUNTIME_EXECUTOR="docker-openclaw"
-      RUNTIME_CONFIG_DIR="$SHARED_OPENCLAW_DIR"
-      RUNTIME_CONFIG_FILE="$SHARED_OPENCLAW_CONFIG"
-      RUNTIME_CONFIG_MOUNT_PATH="$OPENCLAW_CONFIG_MOUNT_PATH"
-      RUNTIME_CONFIG_BASENAME="openclaw.json"
-      DEFAULT_BASE_IMAGE="openclaw:local"
-      POOL_LABEL="${POOL_LABEL:-app=openclaw-agent}"
-      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-openclaw-agent}"
+    claudecode)
+      RUNTIME_NAME="claudecode"
+      RUNTIME_EXECUTOR="docker-claudecode"
+      RUNTIME_CONFIG_DIR="$SHARED_CLAUDECODE_DIR"
+      RUNTIME_CONFIG_FILE="$SHARED_CLAUDECODE_CONFIG"
+      RUNTIME_CONFIG_MOUNT_PATH="$CLAUDECODE_CONFIG_MOUNT_PATH"
+      RUNTIME_CONFIG_BASENAME="config.json"
+      DEFAULT_BASE_IMAGE="claudecode:latest"
+      POOL_LABEL="${POOL_LABEL:-app=claudecode-agent}"
+      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-claudecode-agent}"
       BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
-      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/openclaw-runner:latest}"
-      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_openclaw_task.sh}"
+      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/claudecode-runner:latest}"
+      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_claudecode_task.sh}"
       ;;
     *)
-      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: picoclaw|openclaw)"
+      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: opencode|claudecode)"
       ;;
   esac
   AGENT_RUNTIME="$runtime"
@@ -189,7 +199,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_PICO_DIR" "$SHARED_OPENCLAW_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
 }
 
 ensure_runtime_config_ready() {
@@ -205,6 +215,9 @@ ensure_runtime_config_for_up() {
   ensure_dirs
   if [ -s "$RUNTIME_CONFIG_FILE" ]; then
     return
+  fi
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    die "missing opencode config: $RUNTIME_CONFIG_FILE (install opencode and maintain this file, or set OPENCODE_CONFIG_FILE)"
   fi
   log "config not found, generating full template (same as: AGENT_RUNTIME=$RUNTIME_NAME $0 init)"
   init_full_config
@@ -234,6 +247,7 @@ import_config() {
   if [ ! -f "$src" ]; then
     die "config source not found: $src"
   fi
+  mkdir -p "$RUNTIME_CONFIG_DIR"
   cp "$src" "$RUNTIME_CONFIG_FILE"
   log "imported $RUNTIME_NAME config: $src -> $RUNTIME_CONFIG_FILE"
 }
@@ -258,45 +272,41 @@ edit_config() {
   "$editor" "$RUNTIME_CONFIG_FILE"
 }
 
-init_picoclaw_config_full() {
+init_opencode_config_full() {
   ensure_dirs
-  ensure_runner_image
+  mkdir -p "$RUNTIME_CONFIG_DIR"
 
   if [ -f "$RUNTIME_CONFIG_FILE" ]; then
     cp "$RUNTIME_CONFIG_FILE" "$RUNTIME_CONFIG_FILE.bak"
     log "backup created: $RUNTIME_CONFIG_FILE.bak"
   fi
 
-  docker run --rm --entrypoint /bin/sh "$RUNNER_IMAGE" -lc '
-set -eu
-HOME=/tmp/picoclaw-home
-mkdir -p "$HOME"
-
-if command -v picoclaw >/dev/null 2>&1; then
-  picoclaw onboard </dev/null >/tmp/picoclaw-onboard.log 2>&1 || true
-fi
-
-for p in \
-  "$HOME/.picoclaw/config.json" \
-  "/root/.picoclaw/config.json" \
-  "/app/config/config.example.json" \
-  "/config/config.example.json" \
-  "/workspace/config/config.example.json"; do
-  if [ -s "$p" ]; then
-    cat "$p"
-    exit 0
-  fi
-done
-
-example="$(find / -maxdepth 5 -type f -name config.example.json 2>/dev/null | head -n 1 || true)"
-if [ -n "$example" ] && [ -s "$example" ]; then
-  cat "$example"
-  exit 0
-fi
-
-echo "unable to generate full config from picoclaw image" >&2
-exit 1
-' > "$RUNTIME_CONFIG_FILE.tmp"
+  cat > "$RUNTIME_CONFIG_FILE.tmp" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-5",
+  "provider": {
+    "openai": {
+      "npm": "@ai-sdk/openai",
+      "name": "OpenAI",
+      "options": {
+        "baseURL": "https://api.openai.com/v1",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "gpt-5": {}
+      }
+    }
+  },
+  "mcp": {},
+  "agent": {},
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow"
+  }
+}
+JSON
 
 if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
   rm -f "$RUNTIME_CONFIG_FILE.tmp"
@@ -304,10 +314,11 @@ if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
 fi
 
 mv -f "$RUNTIME_CONFIG_FILE.tmp" "$RUNTIME_CONFIG_FILE"
+mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
 log "initialized full config template: $RUNTIME_CONFIG_FILE"
 }
 
-init_openclaw_config_full() {
+init_claudecode_config_full() {
   ensure_dirs
   ensure_runner_image
 
@@ -318,39 +329,45 @@ init_openclaw_config_full() {
 
   docker run --rm --entrypoint /bin/sh "$RUNNER_IMAGE" -lc '
 set -eu
-HOME=/tmp/openclaw-home
+HOME=/tmp/claudecode-home
 mkdir -p "$HOME"
 
-if command -v openclaw >/dev/null 2>&1; then
-  openclaw config init >/tmp/openclaw-config-init.log 2>&1 || true
-  openclaw init >/tmp/openclaw-init.log 2>&1 || true
+if command -v claudecode >/dev/null 2>&1; then
+  claudecode config init >/tmp/claudecode-config-init.log 2>&1 || true
+  claudecode init >/tmp/claudecode-init.log 2>&1 || true
 fi
 
 for p in \
-  "$HOME/.openclaw/openclaw.json" \
-  "$HOME/.config/openclaw/openclaw.json" \
-  "/root/.openclaw/openclaw.json" \
-  "/root/.config/openclaw/openclaw.json" \
-  "/workspace/.openclaw/openclaw.json" \
-  "/app/config/openclaw.json" \
-  "/app/config/openclaw.example.json" \
-  "/config/openclaw.json" \
-  "/config/openclaw.example.json" \
-  "/workspace/config/openclaw.json" \
-  "/workspace/config/openclaw.example.json"; do
+  "$HOME/.claudecode/config.json" \
+  "$HOME/.config/claudecode/config.json" \
+  "$HOME/.claudecode/claudecode.json" \
+  "/root/.claudecode/config.json" \
+  "/root/.config/claudecode/config.json" \
+  "/root/.claudecode/claudecode.json" \
+  "/workspace/.claudecode/config.json" \
+  "/workspace/.claudecode/claudecode.json" \
+  "/app/config/config.json" \
+  "/app/config/claudecode.json" \
+  "/app/config/claudecode.example.json" \
+  "/config/config.json" \
+  "/config/claudecode.json" \
+  "/config/claudecode.example.json" \
+  "/workspace/config/config.json" \
+  "/workspace/config/claudecode.json" \
+  "/workspace/config/claudecode.example.json"; do
   if [ -s "$p" ]; then
     cat "$p"
     exit 0
   fi
 done
 
-example="$(find / -maxdepth 6 -type f \( -name "openclaw*.json" -o -name "*openclaw*config*.json" -o -name "config.example.json" \) 2>/dev/null | head -n 1 || true)"
+example="$(find / -maxdepth 6 -type f \( -name "claudecode*.json" -o -name "*claudecode*config*.json" -o -name "config.example.json" \) 2>/dev/null | head -n 1 || true)"
 if [ -n "$example" ] && [ -s "$example" ]; then
   cat "$example"
   exit 0
 fi
 
-echo "unable to generate full config from openclaw image" >&2
+echo "unable to generate full config from claudecode image" >&2
 exit 1
 ' > "$RUNTIME_CONFIG_FILE.tmp"
 
@@ -365,44 +382,46 @@ log "initialized full config template: $RUNTIME_CONFIG_FILE"
 
 init_full_config() {
   load_runtime_profile
-  if [ "$RUNTIME_NAME" = "picoclaw" ]; then
-    init_picoclaw_config_full
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    init_opencode_config_full
     return
   fi
-  init_openclaw_config_full
+  init_claudecode_config_full
 }
 
 edit_config_hint() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "picoclaw" ]; then
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
     cat <<EOF
-picoclaw config path:
+opencode config path:
   $RUNTIME_CONFIG_FILE
 
-Edit this file to configure full sections like:
-  - model_list / providers
-  - tools (mcp / skills / web / exec ...)
-  - channels / heartbeat / gateway
+This should be your official opencode config file managed by administrators.
 
-Optional: generate a full template from picoclaw first:
-  AGENT_RUNTIME=picoclaw bash $0 config init-full
+Edit this file to configure sections like:
+  - model / provider
+  - mcp / agent / permission
+  - hooks / formatter / linter / theme
+
+Optional: generate a starter template in this exact file path:
+  AGENT_RUNTIME=opencode bash $0 config init-full
 
 Then run:
-  AGENT_RUNTIME=picoclaw bash $0 pool start
+  AGENT_RUNTIME=opencode bash $0 pool start
 EOF
     return
   fi
 
   cat <<EOF
-openclaw config path:
+claudecode config path:
   $RUNTIME_CONFIG_FILE
 
-Optional: generate a full template from openclaw first:
-  AGENT_RUNTIME=openclaw bash $0 config init-full
+Optional: generate a full template from claudecode first:
+  AGENT_RUNTIME=claudecode bash $0 config init-full
 
 Then run:
-  AGENT_RUNTIME=openclaw bash $0 pool start
+  AGENT_RUNTIME=claudecode bash $0 pool start
 EOF
 }
 
@@ -412,7 +431,7 @@ print_runtime_config_paths() {
   cat <<EOF
 runtime:
   $RUNTIME_NAME
-shared config:
+runtime config file:
   $RUNTIME_CONFIG_FILE
 container mount path:
   $(runtime_config_mount_file)
@@ -429,10 +448,10 @@ install_all() {
   (cd "$REPO_ROOT" && go build -o "$CLOUDCLAW_BIN" ./cmd/cloudclaw)
 
   log "preparing runner assets"
-  cp "$SCRIPT_DIR/templates/run_picoclaw_task.sh" "$RUNNER_DIR/run_picoclaw_task.sh"
-  cp "$SCRIPT_DIR/templates/run_openclaw_task.sh" "$RUNNER_DIR/run_openclaw_task.sh"
+  cp "$SCRIPT_DIR/templates/run_opencode_task.sh" "$RUNNER_DIR/run_opencode_task.sh"
+  cp "$SCRIPT_DIR/templates/run_claudecode_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
   cp "$SCRIPT_DIR/templates/Dockerfile.runner" "$RUNNER_DIR/Dockerfile.runner"
-  chmod +x "$RUNNER_DIR/run_picoclaw_task.sh" "$RUNNER_DIR/run_openclaw_task.sh"
+  chmod +x "$RUNNER_DIR/run_opencode_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
 
   resolved_base_image="$(resolve_base_image)"
   log "using base image: $resolved_base_image"
@@ -462,34 +481,34 @@ start_pool() {
 
     log "creating container: $name"
     env_args=()
-    if [ "$RUNTIME_NAME" = "picoclaw" ]; then
+    if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
-        "-e" "PICOCLAW_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
-        "-e" "PICOCLAW_CONFIG=$(runtime_config_mount_file)"
+        "-e" "OPENCODE_CONFIG=$(runtime_config_mount_file)"
+        "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
       )
     else
       env_args+=(
-        "-e" "OPENCLAW_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
-        "-e" "OPENCLAW_CONFIG_PATH=$(runtime_config_mount_file)"
-        "-e" "OPENCLAW_EXEC_MODE=${OPENCLAW_EXEC_MODE:-gateway}"
+        "-e" "CLAUDECODE_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
+        "-e" "CLAUDECODE_CONFIG_PATH=$(runtime_config_mount_file)"
+        "-e" "CLAUDECODE_EXEC_MODE=${CLAUDECODE_EXEC_MODE:-gateway}"
       )
-      if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
-        env_args+=("-e" "OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}")
+      if [ -n "${CLAUDECODE_GATEWAY_TOKEN:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_GATEWAY_TOKEN=${CLAUDECODE_GATEWAY_TOKEN}")
       fi
-      if [ -n "${OPENCLAW_GATEWAY_BIND:-}" ]; then
-        env_args+=("-e" "OPENCLAW_GATEWAY_BIND=${OPENCLAW_GATEWAY_BIND}")
+      if [ -n "${CLAUDECODE_GATEWAY_BIND:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_GATEWAY_BIND=${CLAUDECODE_GATEWAY_BIND}")
       fi
-      if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
-        env_args+=("-e" "OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT}")
+      if [ -n "${CLAUDECODE_GATEWAY_PORT:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_GATEWAY_PORT=${CLAUDECODE_GATEWAY_PORT}")
       fi
-      if [ -n "${OPENCLAW_GATEWAY_MANAGE:-}" ]; then
-        env_args+=("-e" "OPENCLAW_GATEWAY_MANAGE=${OPENCLAW_GATEWAY_MANAGE}")
+      if [ -n "${CLAUDECODE_GATEWAY_MANAGE:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_GATEWAY_MANAGE=${CLAUDECODE_GATEWAY_MANAGE}")
       fi
-      if [ -n "${OPENCLAW_AGENT_ID:-}" ]; then
-        env_args+=("-e" "OPENCLAW_AGENT_ID=${OPENCLAW_AGENT_ID}")
+      if [ -n "${CLAUDECODE_AGENT_ID:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_AGENT_ID=${CLAUDECODE_AGENT_ID}")
       fi
-      if [ -n "${OPENCLAW_TIMEOUT_SECONDS:-}" ]; then
-        env_args+=("-e" "OPENCLAW_TIMEOUT_SECONDS=${OPENCLAW_TIMEOUT_SECONDS}")
+      if [ -n "${CLAUDECODE_TIMEOUT_SECONDS:-}" ]; then
+        env_args+=("-e" "CLAUDECODE_TIMEOUT_SECONDS=${CLAUDECODE_TIMEOUT_SECONDS}")
       fi
     fi
 
@@ -675,34 +694,36 @@ Legacy aliases (compatible):
   start-pool, stop-pool, start, stop
 
 Examples:
-  AGENT_RUNTIME=picoclaw $0 init
-  AGENT_RUNTIME=picoclaw $0 up
-  AGENT_RUNTIME=openclaw $0 init
-  AGENT_RUNTIME=openclaw $0 up
-  AGENT_RUNTIME=picoclaw $0 smoke
+  AGENT_RUNTIME=opencode $0 init
+  AGENT_RUNTIME=opencode $0 up
+  AGENT_RUNTIME=claudecode $0 init
+  AGENT_RUNTIME=claudecode $0 up
+  AGENT_RUNTIME=opencode $0 smoke
 
 Environment overrides:
-  AGENT_RUNTIME (required: picoclaw|openclaw)
+  AGENT_RUNTIME (required: opencode|claudecode)
   CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
   CC_HOME_FILE (default: $REPO_ROOT/cloudclaw_data-home, stores persisted CC_HOME)
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
-  BASE_IMAGE (runtime default: picoclaw=docker.io/sipeed/picoclaw:latest, openclaw=openclaw:local)
-  FALLBACK_BASE_IMAGE (default for picoclaw: ghcr.io/sipeed/picoclaw:latest)
+  BASE_IMAGE (runtime default: opencode=opencode:latest, claudecode=claudecode:latest)
+  FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
-  PICOCLAW_CONFIG_MOUNT_PATH (default: /workspace/.picoclaw)
-  OPENCLAW_CONFIG_MOUNT_PATH (default: /workspace/.openclaw)
-  DOCKER_TASK_CMD (runtime default: run_picoclaw_task.sh|run_openclaw_task.sh)
+  OPENCODE_CONFIG_FILE (default: ~/.config/opencode/opencode.json)
+  OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.opencode)
+  CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
+  DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_claudecode_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
-  OPENCLAW_EXEC_MODE (default: gateway, runtime=openclaw only)
-  OPENCLAW_GATEWAY_TOKEN / OPENCLAW_GATEWAY_BIND / OPENCLAW_GATEWAY_PORT / OPENCLAW_GATEWAY_MANAGE (optional)
-  OPENCLAW_AGENT_ID / OPENCLAW_TIMEOUT_SECONDS (optional)
+  CLAUDECODE_EXEC_MODE (default: gateway, runtime=claudecode only)
+  CLAUDECODE_GATEWAY_TOKEN / CLAUDECODE_GATEWAY_BIND / CLAUDECODE_GATEWAY_PORT / CLAUDECODE_GATEWAY_MANAGE (optional)
+  CLAUDECODE_AGENT_ID / CLAUDECODE_TIMEOUT_SECONDS (optional)
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
-  "up" auto-runs init when runtime config does not exist.
+  "up" auto-runs init only for claudecode when runtime config does not exist.
+  opencode runtime expects OPENCODE_CONFIG_FILE to already exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.
 USAGE
@@ -775,7 +796,6 @@ cmd_runner() {
 cmd_shortcut() {
   local action="${1:-help}"
   local arg1="${2:-}"
-  local arg2="${3:-}"
   case "$action" in
     init) init_full_config ;;
     install) install_all ;;
@@ -815,7 +835,6 @@ cmd_shortcut() {
       die "unknown command: $action (run: $0 help)"
       ;;
   esac
-  _unused="$arg2"
 }
 
 main() {
