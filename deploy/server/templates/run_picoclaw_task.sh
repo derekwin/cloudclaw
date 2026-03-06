@@ -37,44 +37,16 @@ if [ ! -s "$PICOCLAW_CONFIG" ]; then
   exit 1
 fi
 
-model_list_block="$(sed -n '/"model_list"[[:space:]]*:/,/\][[:space:]]*,\{0,1\}[[:space:]]*$/p' "$PICOCLAW_CONFIG")"
-first_model_in_list="$(printf '%s\n' "$model_list_block" \
-  | grep -E '"(model_name|name)"[[:space:]]*:' \
-  | sed -n '1{
-      s/.*"model_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p
-      t done
-      s/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p
-      :done
-    }')"
-
-if [ -z "$first_model_in_list" ]; then
-  echo "no model_name found in model_list: $PICOCLAW_CONFIG" >&2
-  exit 1
+if [ -n "$PICO_MODEL_NAME" ]; then
+  PICOCLAW_HOME="$PICOCLAW_HOME" \
+  PICOCLAW_CONFIG="$PICOCLAW_CONFIG" \
+  picoclaw agent --model "$PICO_MODEL_NAME" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
+else
+  # Config-driven mode: let picoclaw resolve defaults.model_name from config.json.
+  PICOCLAW_HOME="$PICOCLAW_HOME" \
+  PICOCLAW_CONFIG="$PICOCLAW_CONFIG" \
+  picoclaw agent -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
 fi
-
-defaults_block="$(sed -n '/"defaults"[[:space:]]*:/,/\}[[:space:]]*,\{0,1\}[[:space:]]*$/p' "$PICOCLAW_CONFIG")"
-default_model_name="$(printf '%s\n' "$defaults_block" | sed -n 's/.*"model_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-if [ -z "$default_model_name" ]; then
-  default_model_name="$(printf '%s\n' "$defaults_block" | sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
-fi
-
-selected_model="$PICO_MODEL_NAME"
-if [ -z "$selected_model" ]; then
-  selected_model="$default_model_name"
-fi
-if [ -z "$selected_model" ]; then
-  selected_model="$first_model_in_list"
-fi
-
-selected_model_re="$(printf '%s' "$selected_model" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
-if ! printf '%s\n' "$model_list_block" | grep -Eq "\"(model_name|name)\"[[:space:]]*:[[:space:]]*\"$selected_model_re\""; then
-  echo "model \"$selected_model\" not found in model_list, fallback to \"$first_model_in_list\"" >&2
-  selected_model="$first_model_in_list"
-fi
-
-PICOCLAW_HOME="$PICOCLAW_HOME" \
-PICOCLAW_CONFIG="$PICOCLAW_CONFIG" \
-picoclaw agent --model "$selected_model" -m "$CLOUDCLAW_INPUT" > "$CLOUDCLAW_WORKSPACE/result.txt"
 
 prompt_chars=$(printf "%s" "$CLOUDCLAW_INPUT" | wc -c | tr -d ' ')
 resp_chars=$(wc -c < "$CLOUDCLAW_WORKSPACE/result.txt" | tr -d ' ')
