@@ -56,6 +56,7 @@ CONTAINER_PIDS_LIMIT="${CONTAINER_PIDS_LIMIT:-512}"
 CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-}"
 AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
+OPENCODE_HOST_CONFIG_DIR="${OPENCODE_HOST_CONFIG_DIR:-$HOME/.config/opencode}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -299,6 +300,18 @@ reset_config() {
 edit_config() {
   load_runtime_profile
   ensure_dirs
+  if [ "$RUNTIME_NAME" = "opencode" ]; then
+    if [ ! -d "$RUNTIME_CONFIG_DIR" ] || [ -z "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+      log "opencode shared config dir is empty, initializing first"
+      init_full_config
+    fi
+    editor="${EDITOR:-vi}"
+    if ! command -v "$editor" >/dev/null 2>&1; then
+      die "editor not found: $editor (set EDITOR to a valid command)"
+    fi
+    "$editor" "$RUNTIME_CONFIG_DIR"
+    return
+  fi
   if [ ! -s "$RUNTIME_CONFIG_FILE" ]; then
     log "config not found, initializing full template first"
     init_full_config
@@ -318,6 +331,13 @@ init_opencode_config_full() {
   if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
     log "opencode shared config already exists, skip bootstrap: $RUNTIME_CONFIG_DIR"
     return
+  fi
+  if [ -d "$OPENCODE_HOST_CONFIG_DIR" ] && [ -n "$(ls -A "$OPENCODE_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
+    cp -R "$OPENCODE_HOST_CONFIG_DIR/." "$RUNTIME_CONFIG_DIR/" || true
+    if [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+      log "bootstrapped opencode shared config from host: $OPENCODE_HOST_CONFIG_DIR -> $RUNTIME_CONFIG_DIR"
+      return
+    fi
   fi
 
   local source_image="$RUNNER_IMAGE"
@@ -861,6 +881,7 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
+  OPENCODE_HOST_CONFIG_DIR (default: ~/.config/opencode, used to bootstrap shared/opencode when empty)
   CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
   CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
   CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
