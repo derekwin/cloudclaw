@@ -53,9 +53,7 @@ if [ -n "$USER_RUNTIME_HOME_BASE" ]; then
   user_id_hash="$(printf '%s' "${CLOUDCLAW_USER_ID:-anonymous}" | cksum | awk '{print $1}')"
   normalized_user_id="${normalized_user_id}-${user_id_hash}"
   USER_RUNTIME_ROOT="$USER_RUNTIME_HOME_BASE/$normalized_user_id"
-  DEFAULT_USER_HOME="$USER_RUNTIME_ROOT/home"
-  USER_DATA_HOME="$USER_RUNTIME_ROOT/.local/share"
-  USER_WORKSPACE_DIR="$USER_RUNTIME_ROOT/workspace"
+  USER_DATA_HOME="$USER_RUNTIME_ROOT"
   USE_EXTERNAL_OPENCODE_HOME=1
 fi
 
@@ -76,6 +74,7 @@ fi
 export HOME="$USER_HOME"
 export XDG_CONFIG_HOME="$(dirname "$OPENCODE_SHARED_CONFIG_DIR")"
 # User data is isolated per user and mapped from host user-runtime storage.
+# With XDG_DATA_HOME=<user-runtime>/<user>, opencode persists to <user-runtime>/<user>/opencode.
 export XDG_DATA_HOME="$USER_DATA_HOME"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 

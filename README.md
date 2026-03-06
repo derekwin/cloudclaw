@@ -10,8 +10,8 @@ export AGENT_RUNTIME=opencode
 bash deploy/server/cloudclawctl.sh init
 
 # 2) 修改默认模型/Provider 等配置
-#    共享目录：./cloudclaw_data/opencode/config
-vim ./cloudclaw_data/opencode/config/opencode.json
+#    共享目录：./cloudclaw_data/shared/opencode
+vim ./cloudclaw_data/shared/opencode/opencode.json
 
 # 3) 启动
 bash deploy/server/cloudclawctl.sh up
@@ -20,11 +20,11 @@ bash deploy/server/cloudclawctl.sh up
 ## 配置位置
 
 - 公共共享配置（所有 opencode 容器共用）：
-  - `./cloudclaw_data/opencode/config/opencode.json`
+  - `./cloudclaw_data/shared/opencode`
   - 容器内映射为 `~/.config/opencode`
   - `init` 会优先尝试从镜像提取默认配置；若镜像未输出配置文件，则写入最小配置骨架（你手动补充 model/provider）
 - 用户私有运行时数据：
-  - `./cloudclaw_data/user-runtime/<user_id>/...`
+  - `./cloudclaw_data/user-runtime/<user_id>/opencode/*`
   - 容器内映射为 `~/.local/share/opencode`
 
 ## 常用命令
