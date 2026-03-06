@@ -6,7 +6,8 @@
 cd cloudclaw
 export AGENT_RUNTIME=opencode
 
-# 1) 生成默认配置（来自容器内 opencode，不依赖宿主安装 opencode）
+# 1) 初始化共享配置目录（优先复制宿主 ~/.config/opencode；
+#    若宿主不存在则尝试从镜像提取；失败时写入最小配置骨架）
 bash deploy/server/cloudclawctl.sh init
 
 # 2) 修改默认模型/Provider 等配置
