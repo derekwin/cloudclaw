@@ -35,7 +35,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$CLOUDCLAW_WORKSPACE" "$TASK_HOME"
-gateway_log="$(mktemp "$TMP_ROOT/claudecode-gateway.XXXXXX.log")"
+gateway_log="$(mktemp -p "$TMP_ROOT" claudecode-gateway.XXXXXX)"
 
 SHARED_WORKSPACE="$SHARED_DIR"
 if [ -n "$SHARED_DIR" ] && [ -d "$SHARED_DIR/workspace" ]; then
@@ -114,7 +114,7 @@ if [ -n "$CLAUDECODE_TIMEOUT_SECONDS" ]; then
   set -- "$@" --timeout "$CLAUDECODE_TIMEOUT_SECONDS"
 fi
 
-output_json="$(mktemp "$TMP_ROOT/claudecode-output.XXXXXX.json")"
+output_json="$(mktemp -p "$TMP_ROOT" claudecode-output.XXXXXX)"
 if ! CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" "$@" >"$output_json"; then
   echo "claudecode agent command failed" >&2
   exit 1
