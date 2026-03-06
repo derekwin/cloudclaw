@@ -54,6 +54,8 @@ DB_DSN="${DB_DSN:-}"
 CONTAINER_HARDEN="${CONTAINER_HARDEN:-1}"
 CONTAINER_PIDS_LIMIT="${CONTAINER_PIDS_LIMIT:-512}"
 CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
+CONTAINER_NETWORK="${CONTAINER_NETWORK:-}"
+AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -178,6 +180,11 @@ can_pull_image() {
 
 resolve_base_image() {
   load_runtime_profile
+  case "$BASE_IMAGE" in
+    *:latest)
+      log "warning: using mutable image tag 'latest' is not recommended in production; prefer fixed version tags"
+      ;;
+  esac
   if can_pull_image "$BASE_IMAGE"; then
     echo "$BASE_IMAGE"
     return 0
@@ -558,6 +565,8 @@ start_pool() {
     log "creating container: $name"
     env_args=()
     harden_args=()
+    network_args=()
+    env_file_args=()
     if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
@@ -605,6 +614,15 @@ start_pool() {
         "--tmpfs" "/var/tmp:rw,noexec,nosuid,nodev,size=128m"
       )
     fi
+    if [ -n "$CONTAINER_NETWORK" ]; then
+      network_args+=("--network" "$CONTAINER_NETWORK")
+    fi
+    if [ -n "$AGENT_ENV_FILE" ]; then
+      if [ ! -f "$AGENT_ENV_FILE" ]; then
+        die "AGENT_ENV_FILE not found: $AGENT_ENV_FILE"
+      fi
+      env_file_args+=("--env-file" "$AGENT_ENV_FILE")
+    fi
 
     docker run -d \
       --name "$name" \
@@ -612,6 +630,8 @@ start_pool() {
       --restart unless-stopped \
       --add-host host.docker.internal:host-gateway \
       --user "${OWNER_UID}:${OWNER_GID}" \
+      "${network_args[@]}" \
+      "${env_file_args[@]}" \
       "${harden_args[@]}" \
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
@@ -849,6 +869,8 @@ Environment overrides:
   CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
   CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
   CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
+  CONTAINER_NETWORK (optional docker network name, e.g. internal)
+  AGENT_ENV_FILE (optional env file path for sensitive vars like API keys)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
