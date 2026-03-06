@@ -52,6 +52,75 @@ func TestRetryTaskPrioritized(t *testing.T) {
 	}
 }
 
+func TestDequeueForRunSerializesSameUser(t *testing.T) {
+	s := newTestStore(t)
+	t1, err := s.SubmitTask(SubmitTaskInput{UserID: "u1", TaskType: "search", Input: "a", MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("submit t1: %v", err)
+	}
+	t2, err := s.SubmitTask(SubmitTaskInput{UserID: "u1", TaskType: "search", Input: "b", MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("submit t2: %v", err)
+	}
+
+	first, err := s.DequeueForRun("container-01", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue first: %v", err)
+	}
+	if first == nil || first.ID != t1.ID {
+		t.Fatalf("expected first dequeue %s, got %+v", t1.ID, first)
+	}
+
+	// Same user should not run concurrently on another container.
+	second, err := s.DequeueForRun("container-02", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue second: %v", err)
+	}
+	if second != nil {
+		t.Fatalf("expected no task due to same-user running lock, got %+v", second)
+	}
+
+	if err := s.MarkTaskSucceeded(t1.ID, "container-01", model.TokenUsage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}, "ok"); err != nil {
+		t.Fatalf("mark success: %v", err)
+	}
+
+	third, err := s.DequeueForRun("container-02", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue third: %v", err)
+	}
+	if third == nil || third.ID != t2.ID {
+		t.Fatalf("expected dequeue %s after first finished, got %+v", t2.ID, third)
+	}
+}
+
+func TestDequeueForRunAllowsDifferentUsersInParallel(t *testing.T) {
+	s := newTestStore(t)
+	t1, err := s.SubmitTask(SubmitTaskInput{UserID: "u1", TaskType: "search", Input: "a", MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("submit t1: %v", err)
+	}
+	t2, err := s.SubmitTask(SubmitTaskInput{UserID: "u2", TaskType: "search", Input: "b", MaxRetries: 1})
+	if err != nil {
+		t.Fatalf("submit t2: %v", err)
+	}
+
+	first, err := s.DequeueForRun("container-01", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue first: %v", err)
+	}
+	if first == nil || first.ID != t1.ID {
+		t.Fatalf("expected first dequeue %s, got %+v", t1.ID, first)
+	}
+
+	second, err := s.DequeueForRun("container-02", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue second: %v", err)
+	}
+	if second == nil || second.ID != t2.ID {
+		t.Fatalf("expected second dequeue %s, got %+v", t2.ID, second)
+	}
+}
+
 func TestRecoverExpiredLease(t *testing.T) {
 	s := newTestStore(t)
 
