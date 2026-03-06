@@ -46,6 +46,9 @@ bash deploy/server/cloudclawctl.sh config show
 
 # import config
 bash deploy/server/cloudclawctl.sh config import /abs/path/opencode.json
+
+# generate config from runtime image defaults (no host opencode needed)
+bash deploy/server/cloudclawctl.sh config init-full
 ```
 
 Notes:

@@ -273,6 +273,7 @@ edit_config() {
 
 init_opencode_config_full() {
   ensure_dirs
+  need_cmd docker
   mkdir -p "$RUNTIME_CONFIG_DIR"
 
   if [ -f "$RUNTIME_CONFIG_FILE" ]; then
@@ -280,32 +281,48 @@ init_opencode_config_full() {
     log "backup created: $RUNTIME_CONFIG_FILE.bak"
   fi
 
-  cat > "$RUNTIME_CONFIG_FILE.tmp" <<'JSON'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "openai/gpt-5",
-  "provider": {
-    "openai": {
-      "npm": "@ai-sdk/openai",
-      "name": "OpenAI",
-      "options": {
-        "baseURL": "https://api.openai.com/v1",
-        "apiKey": "{env:OPENAI_API_KEY}"
-      },
-      "models": {
-        "gpt-5": {}
-      }
-    }
-  },
-  "mcp": {},
-  "agent": {},
-  "permission": {
-    "edit": "allow",
-    "bash": "allow",
-    "webfetch": "allow"
-  }
-}
-JSON
+  local source_image="$RUNNER_IMAGE"
+  if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+    source_image="$(resolve_base_image)"
+  fi
+
+  if ! docker run --rm --entrypoint /bin/sh "$source_image" -lc '
+set -eu
+HOME=/tmp/opencode-home
+export HOME
+export XDG_CONFIG_HOME="$HOME/.config"
+mkdir -p "$XDG_CONFIG_HOME/opencode"
+
+if command -v opencode >/dev/null 2>&1; then
+  opencode config init >/tmp/opencode-config-init.log 2>&1 || true
+  opencode init >/tmp/opencode-init.log 2>&1 || true
+  opencode run --help >/tmp/opencode-run-help.log 2>&1 || true
+  opencode --help >/tmp/opencode-help.log 2>&1 || true
+fi
+
+for p in \
+  "$XDG_CONFIG_HOME/opencode/opencode.json" \
+  "$HOME/.config/opencode/opencode.json" \
+  "/root/.config/opencode/opencode.json" \
+  "/workspace/.config/opencode/opencode.json"; do
+  if [ -s "$p" ]; then
+    cat "$p"
+    exit 0
+  fi
+done
+
+example="$(find / -maxdepth 7 -type f \( -name "opencode.json" -o -name "opencode.*.json" -o -name "*opencode*config*.json" \) 2>/dev/null | head -n 1 || true)"
+if [ -n "$example" ] && [ -s "$example" ]; then
+  cat "$example"
+  exit 0
+fi
+
+echo "unable to generate default opencode config from image" >&2
+exit 1
+' > "$RUNTIME_CONFIG_FILE.tmp"; then
+    rm -f "$RUNTIME_CONFIG_FILE.tmp"
+    die "failed to generate opencode default config from image: $source_image"
+  fi
 
 if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
   rm -f "$RUNTIME_CONFIG_FILE.tmp"
@@ -314,7 +331,7 @@ fi
 
 mv -f "$RUNTIME_CONFIG_FILE.tmp" "$RUNTIME_CONFIG_FILE"
 mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
-log "initialized full config template: $RUNTIME_CONFIG_FILE"
+log "initialized opencode config from image defaults: $RUNTIME_CONFIG_FILE"
 }
 
 init_claudecode_config_full() {
@@ -403,7 +420,7 @@ Edit this file to configure sections like:
   - mcp / agent / permission
   - hooks / formatter / linter / theme
 
-Optional: generate a starter template in this exact file path:
+Optional: generate config from opencode image defaults in this exact file path:
   AGENT_RUNTIME=opencode bash $0 config init-full
 
 Then run:
@@ -715,7 +732,7 @@ Groups:
   runner start | stop | restart | status | logs [lines]
 
 Shortcuts:
-  init        Generate runtime config template
+  init        Generate runtime config (from runtime image defaults)
   install     Build cloudclaw binary + runner image
   up          install + init(if missing) + pool start + runner start
   down        runner stop + pool stop
