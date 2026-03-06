@@ -122,11 +122,11 @@ render_managed_picoclaw_config() {
   model_esc="$(json_escape "$PICO_MODEL")"
   if [ -n "${PICO_API_BASE:-}" ]; then
     api_base_esc="$(json_escape "$PICO_API_BASE")"
-    api_base_json=",\n      \"api_base\": \"${api_base_esc}\""
+    api_base_json="$(printf ',\n      "api_base": "%s"' "$api_base_esc")"
   fi
   if [ -n "${PICO_API_KEY:-}" ]; then
     api_key_esc="$(json_escape "$PICO_API_KEY")"
-    api_key_json=",\n      \"api_key\": \"${api_key_esc}\""
+    api_key_json="$(printf ',\n      "api_key": "%s"' "$api_key_esc")"
   fi
 
   cat > "$SHARED_PICO_CONFIG.tmp" <<EOF
