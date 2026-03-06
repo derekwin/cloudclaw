@@ -71,9 +71,9 @@ func runCmd(args []string) error {
 	sharedSkillsDir := fs.String("shared-skills-dir", "", "global shared skills directory injected into each task workspace")
 	sharedSkillsMode := fs.String("shared-skills-mode", "copy", "shared skills mode: copy|mount")
 	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
-	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker-picoclaw only)")
+	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
-	executorMode := fs.String("executor", "docker-picoclaw", "executor mode: k8s-picoclaw|docker-picoclaw")
+	executorMode := fs.String("executor", "", "executor mode (required): k8s-picoclaw|docker-picoclaw|docker-openclaw")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for picoclaw pods")
 	k8sContext := fs.String("k8s-context", "", "optional kubernetes context")
 	k8sLabelSelector := fs.String("k8s-label-selector", "app=picoclaw-agent", "label selector for picoclaw pods")
@@ -94,6 +94,9 @@ func runCmd(args []string) error {
 	maxUserDataFileBytes := fs.Int64("max-user-data-file-bytes", 32<<20, "max bytes per persisted user data file")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if strings.TrimSpace(*executorMode) == "" {
+		return fmt.Errorf("executor is required: k8s-picoclaw|docker-picoclaw|docker-openclaw")
 	}
 
 	s, err := store.NewWithConfig(store.Config{
@@ -172,6 +175,37 @@ func runCmd(args []string) error {
 			WorkspaceMode:       strings.TrimSpace(*workspaceMode),
 			RunDirHostBase:      workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
 			RunDirContainerBase: workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
+		}
+	case "docker-openclaw":
+		if strings.TrimSpace(*dockerTaskCmd) == "" {
+			return fmt.Errorf("docker-task-cmd is required for docker-openclaw executor")
+		}
+		pool, err = pooladapter.NewDocker(pooladapter.DockerOptions{
+			Binary:                   *dockerBin,
+			LabelSelector:            *dockerLabelSelector,
+			ManagePool:               *dockerManagePool,
+			PoolSize:                 *dockerPoolSize,
+			Image:                    *dockerImage,
+			NamePrefix:               *dockerNamePrefix,
+			InitCmd:                  *dockerInitCmd,
+			SharedSkillsHostDir:      strings.TrimSpace(*sharedSkillsDir),
+			SharedSkillsContainerDir: sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
+			WorkspaceHostDir:         workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
+			WorkspaceContainerDir:    workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
+		})
+		if err != nil {
+			return err
+		}
+		ex = &engine.DockerOpenclawExecutor{
+			DockerPicoclawExecutor: engine.DockerPicoclawExecutor{
+				Docker:              dockerutil.Docker{Binary: *dockerBin},
+				RemoteBaseDir:       *dockerRemoteDir,
+				TaskCommand:         *dockerTaskCmd,
+				SharedSkillsDir:     sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
+				WorkspaceMode:       strings.TrimSpace(*workspaceMode),
+				RunDirHostBase:      workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
+				RunDirContainerBase: workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
+			},
 		}
 	default:
 		return fmt.Errorf("unknown executor mode: %s", *executorMode)
@@ -330,7 +364,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-picoclaw|docker-picoclaw]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-picoclaw|docker-picoclaw|docker-openclaw]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
