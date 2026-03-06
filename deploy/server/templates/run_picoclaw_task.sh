@@ -37,10 +37,15 @@ if [ ! -s "$PICOCLAW_CONFIG" ]; then
   exit 1
 fi
 
-first_model_in_list="$(awk '
-  /"model_list"[[:space:]]*:/ {in_list=1}
-  in_list && match($0, /"model_name"[[:space:]]*:[[:space:]]*"([^"]+)"/, m) { print m[1]; exit }
-' "$PICOCLAW_CONFIG")"
+model_list_block="$(sed -n '/"model_list"[[:space:]]*:/,/\][[:space:]]*,\{0,1\}[[:space:]]*$/p' "$PICOCLAW_CONFIG")"
+first_model_in_list="$(printf '%s\n' "$model_list_block" \
+  | grep -E '"(model_name|name)"[[:space:]]*:' \
+  | sed -n '1{
+      s/.*"model_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p
+      t done
+      s/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p
+      :done
+    }')"
 
 if [ -z "$first_model_in_list" ]; then
   echo "no model_name found in model_list: $PICOCLAW_CONFIG" >&2
@@ -49,11 +54,7 @@ fi
 
 selected_model="$PICO_MODEL_NAME"
 selected_model_re="$(printf '%s' "$selected_model" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
-if ! awk -v model="$selected_model_re" '
-  /"model_list"[[:space:]]*:/ {in_list=1}
-  in_list && $0 ~ "\"model_name\"[[:space:]]*:[[:space:]]*\"" model "\"" { found=1; exit }
-  END { exit found ? 0 : 1 }
-' "$PICOCLAW_CONFIG"; then
+if ! printf '%s\n' "$model_list_block" | grep -Eq "\"(model_name|name)\"[[:space:]]*:[[:space:]]*\"$selected_model_re\""; then
   echo "model \"$selected_model\" not found in model_list, fallback to \"$first_model_in_list\"" >&2
   selected_model="$first_model_in_list"
 fi
