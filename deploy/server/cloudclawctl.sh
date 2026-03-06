@@ -215,6 +215,61 @@ ensure_dirs() {
   fi
 }
 
+resolve_host_opencode_bin() {
+  if command -v opencode >/dev/null 2>&1; then
+    command -v opencode
+    return 0
+  fi
+  for candidate in "$HOME/.local/bin/opencode" "$HOME/bin/opencode"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_host_opencode_installed() {
+  local opencode_bin
+  if opencode_bin="$(resolve_host_opencode_bin)"; then
+    log "host opencode already installed: $opencode_bin"
+    return 0
+  fi
+
+  need_cmd curl
+  need_cmd bash
+  log "host opencode not found, installing: curl -fsSL https://opencode.ai/install | bash"
+  if ! /bin/sh -c 'curl -fsSL https://opencode.ai/install | bash'; then
+    die "failed to install opencode on host"
+  fi
+  if ! opencode_bin="$(resolve_host_opencode_bin)"; then
+    die "opencode installed but executable not found (tried PATH and ~/.local/bin/opencode)"
+  fi
+  log "host opencode installed: $opencode_bin"
+}
+
+bootstrap_host_opencode_config_if_missing() {
+  local opencode_bin host_config_home host_data_home
+  if [ -d "$OPENCODE_HOST_CONFIG_DIR" ] && [ -n "$(ls -A "$OPENCODE_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
+    return 0
+  fi
+
+  ensure_host_opencode_installed
+  opencode_bin="$(resolve_host_opencode_bin)" || die "opencode executable not found after installation"
+  host_config_home="$(dirname "$OPENCODE_HOST_CONFIG_DIR")"
+  host_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  mkdir -p "$OPENCODE_HOST_CONFIG_DIR"
+
+  # Trigger opencode to initialize default config under host XDG dirs.
+  XDG_CONFIG_HOME="$host_config_home" XDG_DATA_HOME="$host_data_home" "$opencode_bin" config init >/tmp/cloudclaw-opencode-config-init.log 2>&1 || true
+  XDG_CONFIG_HOME="$host_config_home" XDG_DATA_HOME="$host_data_home" "$opencode_bin" init >/tmp/cloudclaw-opencode-init.log 2>&1 || true
+  XDG_CONFIG_HOME="$host_config_home" XDG_DATA_HOME="$host_data_home" "$opencode_bin" --help >/tmp/cloudclaw-opencode-help.log 2>&1 || true
+
+  if [ ! -d "$OPENCODE_HOST_CONFIG_DIR" ] || [ -z "$(ls -A "$OPENCODE_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
+    die "host opencode config is still empty: $OPENCODE_HOST_CONFIG_DIR (run opencode once manually, then retry init)"
+  fi
+}
+
 ensure_runtime_config_ready() {
   load_runtime_profile
   ensure_dirs
@@ -325,79 +380,18 @@ edit_config() {
 
 init_opencode_config_full() {
   ensure_dirs
-  need_cmd docker
   mkdir -p "$RUNTIME_CONFIG_DIR"
 
   if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
     log "opencode shared config already exists, skip bootstrap: $RUNTIME_CONFIG_DIR"
     return
   fi
-  if [ -d "$OPENCODE_HOST_CONFIG_DIR" ] && [ -n "$(ls -A "$OPENCODE_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
-    cp -R "$OPENCODE_HOST_CONFIG_DIR/." "$RUNTIME_CONFIG_DIR/" || true
-    if [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
-      log "bootstrapped opencode shared config from host: $OPENCODE_HOST_CONFIG_DIR -> $RUNTIME_CONFIG_DIR"
-      return
-    fi
+
+  bootstrap_host_opencode_config_if_missing
+  cp -R "$OPENCODE_HOST_CONFIG_DIR/." "$RUNTIME_CONFIG_DIR/" || true
+  if [ -z "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+    die "failed to copy host opencode config: $OPENCODE_HOST_CONFIG_DIR -> $RUNTIME_CONFIG_DIR"
   fi
-
-  local source_image="$RUNNER_IMAGE"
-  if ! docker image inspect "$source_image" >/dev/null 2>&1; then
-    source_image="$(resolve_base_image)"
-  fi
-
-  if ! docker run --rm --entrypoint /bin/sh -v "$RUNTIME_CONFIG_DIR:/host-opencode-config" "$source_image" -lc '
-set -eu
-TARGET=/host-opencode-config
-mkdir -p "$TARGET"
-
-HOME=/tmp/opencode-home
-export HOME
-export XDG_CONFIG_HOME="$HOME/.config"
-export XDG_DATA_HOME="$HOME/.local/share"
-mkdir -p "$XDG_CONFIG_HOME/opencode"
-
-if command -v opencode >/dev/null 2>&1; then
-  opencode config init >/tmp/opencode-config-init.log 2>&1 || true
-  opencode init >/tmp/opencode-init.log 2>&1 || true
-  opencode run --help >/tmp/opencode-run-help.log 2>&1 || true
-  opencode --help >/tmp/opencode-help.log 2>&1 || true
-fi
-
-for p in \
-  "$XDG_CONFIG_HOME/opencode/opencode.json" \
-  "$HOME/.config/opencode/opencode.json" \
-  "/root/.config/opencode/opencode.json" \
-  "/workspace/.config/opencode/opencode.json"; do
-  if [ -s "$p" ]; then
-    cp -R "$(dirname "$p")/." "$TARGET/"
-    exit 0
-  fi
-done
-
-example="$(find / -maxdepth 7 -type f \( -name "opencode.json" -o -name "opencode.*.json" -o -name "*opencode*config*.json" \) 2>/dev/null | head -n 1 || true)"
-if [ -n "$example" ] && [ -s "$example" ]; then
-  cp "$example" "$TARGET/opencode.json"
-  exit 0
-fi
-
-echo "unable to generate default opencode config from image" >&2
-exit 1
-'; then
-    log "warning: image did not output default opencode config, writing minimal stub"
-    cat > "$RUNTIME_CONFIG_FILE" <<'JSON'
-{
-  "$schema": "https://opencode.ai/config.json"
-}
-JSON
-  fi
-
-if [ ! -f "$RUNTIME_CONFIG_FILE" ]; then
-  cat > "$RUNTIME_CONFIG_FILE" <<'JSON'
-{
-  "$schema": "https://opencode.ai/config.json"
-}
-JSON
-fi
 
 mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
 log "initialized opencode config: $RUNTIME_CONFIG_FILE"
@@ -489,7 +483,7 @@ Edit files in this directory to configure sections like:
   - mcp / agent / permission
   - hooks / formatter / linter / theme
 
-Optional: generate config from opencode image defaults in this exact file path:
+Optional: initialize shared config from host ~/.config/opencode (auto-installs host opencode if missing):
   AGENT_RUNTIME=opencode bash $0 config init-full
 
 Then run:
@@ -857,7 +851,7 @@ Groups:
   runner start | stop | restart | status | logs [lines]
 
 Shortcuts:
-  init        Generate runtime config (from runtime image defaults)
+  init        Initialize runtime shared config
   install     Build cloudclaw binary + runner image
   up          install + init(if missing) + pool start + runner start
   down        runner stop + pool stop
@@ -891,7 +885,7 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
-  OPENCODE_HOST_CONFIG_DIR (default: ~/.config/opencode, used to bootstrap shared/opencode when empty)
+  OPENCODE_HOST_CONFIG_DIR (default: ~/.config/opencode, source path for opencode init bootstrap)
   CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
   CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
   CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
