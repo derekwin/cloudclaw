@@ -38,5 +38,5 @@ Notes:
 - `opencode` `OPENCODE_PERSIST_MODE=auto` by default: if private runtime path is mounted, keep full runtime state there; fallback to minimal pruning only when using in-workspace home
 - `opencode` runner defaults to `--workspace-state-mode=ephemeral` (no per-user workspace DB restore/persist)
 - `claudecode` can bootstrap config with `AGENT_RUNTIME=claudecode bash deploy/server/cloudclawctl.sh config init-full`
-- opencode shared (all containers): `./cloudclaw_data/opencode/config/*` (mounted read-only to `/root/.config/opencode`)
+- opencode shared (all containers): `./cloudclaw_data/opencode/config/*` (mounted read-only to `/workspace/.config/opencode`)
 - clean historical opencode runtime rows in DB: `bash deploy/server/cloudclawctl.sh db prune-opencode-runtime`

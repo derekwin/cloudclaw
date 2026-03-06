@@ -52,7 +52,7 @@ DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
 OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG_FILE:-$CC_HOME/opencode/config/opencode.json}"
-OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/root/.config/opencode}"
+OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
 OWNER_GID="${AGENT_OWNER_GID:-${OPENCODE_OWNER_GID:-${SUDO_GID:-$(id -g)}}}"
@@ -745,7 +745,7 @@ Environment overrides:
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
   OPENCODE_CONFIG_FILE (default: <CC_HOME>/opencode/config/opencode.json)
-  OPENCODE_CONFIG_MOUNT_PATH (default: /root/.config/opencode)
+  OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   USER_RUNTIME_MOUNT_PATH (default: /workspace/cloudclaw/user-runtime; container path for per-user runtime state)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
   WORKSPACE_STATE_MODE (optional: db|ephemeral; default: opencode=ephemeral, claudecode=db)
