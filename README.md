@@ -19,6 +19,10 @@ bash deploy/server/cloudclawctl.sh smoke
 # dequeue finished task results for downstream consumer
 bash deploy/server/cloudclawctl.sh result dequeue 20
 
+# inspect one task lifecycle/result (non-destructive)
+bash deploy/server/cloudclawctl.sh task trace <task_id>
+bash deploy/server/cloudclawctl.sh result get <task_id>
+
 # simulate concurrent submit + independent result-poll worker
 go run ./cmd/tasksim \
   --data-dir ./cloudclaw_data/data \

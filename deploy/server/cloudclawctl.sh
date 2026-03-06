@@ -707,7 +707,9 @@ Usage:
 Groups:
   home   set <path> | show
   config path | show | edit | import <file> | reset | init-full | help
+  task   status <task_id> | events <task_id> | trace <task_id>
   result dequeue [limit]
+         get <task_id>
   db     prune-opencode-runtime
   pool   start | stop | restart | status
   runner start | stop | restart | status | logs [lines]
@@ -734,6 +736,7 @@ Examples:
   AGENT_RUNTIME=claudecode $0 init
   AGENT_RUNTIME=claudecode $0 up
   AGENT_RUNTIME=opencode $0 smoke
+  AGENT_RUNTIME=opencode $0 task trace tsk_xxx
 
 Environment overrides:
   AGENT_RUNTIME (required: opencode|claudecode)
@@ -825,11 +828,65 @@ cmd_db() {
   esac
 }
 
+cmd_task() {
+  local action="${1:-}"
+  local task_id="${2:-}"
+  ensure_dirs
+  if [ ! -x "$CLOUDCLAW_BIN" ]; then
+    die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
+  fi
+  case "$action" in
+    status)
+      require_arg "<task_id>" "$task_id"
+      cmd=(
+        "$CLOUDCLAW_BIN" task status
+        --data-dir "$DATA_DIR"
+        --db-driver "$DB_DRIVER"
+        --task-id "$task_id"
+      )
+      if [ -n "$DB_DSN" ]; then
+        cmd+=(--db-dsn "$DB_DSN")
+      fi
+      "${cmd[@]}"
+      ;;
+    events)
+      require_arg "<task_id>" "$task_id"
+      cmd=(
+        "$CLOUDCLAW_BIN" audit
+        --data-dir "$DATA_DIR"
+        --db-driver "$DB_DRIVER"
+        --task-id "$task_id"
+      )
+      if [ -n "$DB_DSN" ]; then
+        cmd+=(--db-dsn "$DB_DSN")
+      fi
+      "${cmd[@]}"
+      ;;
+    trace)
+      require_arg "<task_id>" "$task_id"
+      echo "# task status"
+      cmd_task status "$task_id"
+      echo
+      echo "# task events"
+      cmd_task events "$task_id"
+      echo
+      echo "# task result"
+      cmd_result get "$task_id"
+      ;;
+    *)
+      die "unknown task action: $action (use: status <task_id>|events <task_id>|trace <task_id>)"
+      ;;
+  esac
+}
+
 cmd_result() {
   local action="${1:-dequeue}"
-  local arg="${2:-20}"
+  local arg="${2:-}"
   case "$action" in
     dequeue)
+      if [ -z "$arg" ]; then
+        arg="20"
+      fi
       ensure_dirs
       if [ ! -x "$CLOUDCLAW_BIN" ]; then
         die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
@@ -845,8 +902,25 @@ cmd_result() {
       fi
       "${cmd[@]}"
       ;;
+    get)
+      require_arg "<task_id>" "$arg"
+      ensure_dirs
+      if [ ! -x "$CLOUDCLAW_BIN" ]; then
+        die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
+      fi
+      cmd=(
+        "$CLOUDCLAW_BIN" result get
+        --data-dir "$DATA_DIR"
+        --db-driver "$DB_DRIVER"
+        --task-id "$arg"
+      )
+      if [ -n "$DB_DSN" ]; then
+        cmd+=(--db-dsn "$DB_DSN")
+      fi
+      "${cmd[@]}"
+      ;;
     *)
-      die "unknown result action: $action (use: dequeue [limit])"
+      die "unknown result action: $action (use: dequeue [limit]|get <task_id>)"
       ;;
   esac
 }
@@ -889,6 +963,9 @@ cmd_shortcut() {
       ;;
     status) status_all ;;
     smoke) smoke ;;
+    task-status) cmd_task status "$arg1" ;;
+    task-events) cmd_task events "$arg1" ;;
+    task-trace) cmd_task trace "$arg1" ;;
     help|--help|-h|"") usage ;;
     # legacy aliases
     set-home) set_home "$arg1" ;;
@@ -917,6 +994,7 @@ main() {
   case "$group" in
     home) cmd_home "$action" "$arg" ;;
     config) cmd_config "$action" "$arg" ;;
+    task) cmd_task "$action" "$arg" ;;
     result) cmd_result "$action" "$arg" ;;
     db) cmd_db "$action" ;;
     pool) cmd_pool "$action" ;;

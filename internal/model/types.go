@@ -61,6 +61,7 @@ type TaskResult struct {
 	Output       string      `json:"output"`
 	Usage        *TokenUsage `json:"usage,omitempty"`
 	CreatedAt    time.Time   `json:"created_at"`
+	DeliveredAt  *time.Time  `json:"delivered_at,omitempty"`
 }
 
 type Snapshot struct {
