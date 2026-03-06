@@ -95,6 +95,18 @@ type TaskEvent struct {
 	At          time.Time `json:"at"`
 }
 
+type TaskResult struct {
+	ID           string      `json:"id"`
+	TaskID       string      `json:"task_id"`
+	UserID       string      `json:"user_id"`
+	TaskType     string      `json:"task_type"`
+	Status       string      `json:"status"`
+	ErrorMessage string      `json:"error_message,omitempty"`
+	Output       string      `json:"output,omitempty"`
+	Usage        *TokenUsage `json:"usage,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+}
+
 func (c *Client) SubmitTask(req SubmitTaskRequest) (Task, error) {
 	if req.UserID == "" {
 		return Task{}, fmt.Errorf("user_id is required")
@@ -167,6 +179,35 @@ func (c *Client) TaskEvents(taskID string) ([]TaskEvent, error) {
 			ContainerID: e.ContainerID,
 			At:          e.At,
 		})
+	}
+	return out, nil
+}
+
+func (c *Client) DequeueTaskResults(limit int) ([]TaskResult, error) {
+	results, err := c.store.DequeueTaskResults(limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TaskResult, 0, len(results))
+	for _, r := range results {
+		item := TaskResult{
+			ID:           r.ID,
+			TaskID:       r.TaskID,
+			UserID:       r.UserID,
+			TaskType:     r.TaskType,
+			Status:       string(r.Status),
+			ErrorMessage: r.ErrorMessage,
+			Output:       r.Output,
+			CreatedAt:    r.CreatedAt,
+		}
+		if r.Usage != nil {
+			item.Usage = &TokenUsage{
+				PromptTokens:     r.Usage.PromptTokens,
+				CompletionTokens: r.Usage.CompletionTokens,
+				TotalTokens:      r.Usage.TotalTokens,
+			}
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }

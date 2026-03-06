@@ -11,7 +11,7 @@ type TaskStore interface {
 	DequeueForRun(containerID string, leaseDuration time.Duration) (*model.Task, error)
 	Heartbeat(taskID, containerID string, leaseDuration time.Duration) error
 	IsCancelRequested(taskID string) (bool, error)
-	MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error
+	MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage, output string) error
 	MarkTaskCanceled(taskID, containerID, reason string) error
 	MarkTaskRetryOrFail(taskID, containerID, reason string) error
 	RecoverExpiredLeases() (int, error)

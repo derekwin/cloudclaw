@@ -587,7 +587,7 @@ func (s *Store) IsCancelRequested(taskID string) (bool, error) {
 	return b, nil
 }
 
-func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage) error {
+func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenUsage, output string) error {
 	taskID, err := trimRequired(taskID, "task id")
 	if err != nil {
 		return err
@@ -602,6 +602,16 @@ func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenU
 		return err
 	}
 	defer rollback(tx)
+	task, err := s.getTaskTx(tx, taskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("task %s not found", taskID)
+		}
+		return err
+	}
+	if task.Status != model.StatusRunning || task.ContainerID != containerID {
+		return fmt.Errorf("task %s not running or owned by another container", taskID)
+	}
 
 	res, err := tx.Exec(s.markSucceededSQL(),
 		string(model.StatusSuccess), usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens,
@@ -628,6 +638,23 @@ func (s *Store) MarkTaskSucceeded(taskID, containerID string, usage model.TokenU
 	}); err != nil {
 		return err
 	}
+	if err := s.insertTaskResultTx(tx, model.TaskResult{
+		ID:           genID("res"),
+		TaskID:       taskID,
+		UserID:       task.UserID,
+		TaskType:     task.TaskType,
+		Status:       model.StatusSuccess,
+		ErrorMessage: "",
+		Output:       output,
+		Usage: &model.TokenUsage{
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			TotalTokens:      usage.TotalTokens,
+		},
+		CreatedAt: now,
+	}); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -647,6 +674,16 @@ func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
 		return err
 	}
 	defer rollback(tx)
+	task, err := s.getTaskTx(tx, taskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("task %s not found", taskID)
+		}
+		return err
+	}
+	if task.Status != model.StatusRunning || task.ContainerID != containerID {
+		return fmt.Errorf("task %s not running or owned by another container", taskID)
+	}
 
 	res, err := tx.Exec(s.markCanceledSQL(), string(model.StatusCanceled), reason, now, now, s.dialect.boolValue(false), taskID, string(model.StatusRunning), containerID)
 	if err != nil {
@@ -667,6 +704,17 @@ func (s *Store) MarkTaskCanceled(taskID, containerID, reason string) error {
 		ToStatus:   string(model.StatusCanceled),
 		Reason:     reason,
 		At:         now,
+	}); err != nil {
+		return err
+	}
+	if err := s.insertTaskResultTx(tx, model.TaskResult{
+		ID:           genID("res"),
+		TaskID:       taskID,
+		UserID:       task.UserID,
+		TaskType:     task.TaskType,
+		Status:       model.StatusCanceled,
+		ErrorMessage: reason,
+		CreatedAt:    now,
 	}); err != nil {
 		return err
 	}
@@ -729,6 +777,26 @@ func (s *Store) MarkTaskRetryOrFail(taskID, containerID, reason string) error {
 		ToStatus:   string(model.StatusFailed),
 		Reason:     reason,
 		At:         now,
+	}); err != nil {
+		return err
+	}
+	var usage *model.TokenUsage
+	if task.Usage != nil {
+		usage = &model.TokenUsage{
+			PromptTokens:     task.Usage.PromptTokens,
+			CompletionTokens: task.Usage.CompletionTokens,
+			TotalTokens:      task.Usage.TotalTokens,
+		}
+	}
+	if err := s.insertTaskResultTx(tx, model.TaskResult{
+		ID:           genID("res"),
+		TaskID:       taskID,
+		UserID:       task.UserID,
+		TaskType:     task.TaskType,
+		Status:       model.StatusFailed,
+		ErrorMessage: reason,
+		Usage:        usage,
+		CreatedAt:    now,
 	}); err != nil {
 		return err
 	}
@@ -898,6 +966,57 @@ func (s *Store) ListEvents(taskID string) ([]model.TaskEvent, error) {
 	return out, nil
 }
 
+func (s *Store) DequeueTaskResults(limit int) ([]model.TaskResult, error) {
+	if limit <= 0 {
+		limit = 1
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
+
+	rows, err := tx.Query(s.selectPendingTaskResultsSQL(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates := make([]model.TaskResult, 0, limit)
+	for rows.Next() {
+		result, err := scanTaskResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]model.TaskResult, 0, len(candidates))
+	now := time.Now().UTC()
+	for _, result := range candidates {
+		res, err := tx.Exec(s.markTaskResultDeliveredSQL(), now, result.ID)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected == 1 {
+			out = append(out, result)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Store) ensureSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS tasks (
@@ -957,6 +1076,21 @@ func (s *Store) ensureSchema() error {
   at TIMESTAMP NOT NULL
 )`,
 		`CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events (task_id, at)`,
+		`CREATE TABLE IF NOT EXISTS task_results (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL,
+  task_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error_message TEXT NOT NULL,
+  output TEXT NOT NULL,
+  usage_prompt_tokens INTEGER NULL,
+  usage_completion_tokens INTEGER NULL,
+  usage_total_tokens INTEGER NULL,
+  created_at TIMESTAMP NOT NULL,
+  delivered_at TIMESTAMP NULL
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_results_queue ON task_results (delivered_at, created_at, id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -980,6 +1114,32 @@ func (s *Store) insertEventTx(tx *sql.Tx, evt model.TaskEvent) error {
 		return err
 	}
 	return s.pruneTaskEventsTx(tx, evt.TaskID)
+}
+
+func (s *Store) insertTaskResultTx(tx *sql.Tx, result model.TaskResult) error {
+	query := s.insertTaskResultSQL()
+	var usagePrompt, usageCompletion, usageTotal any
+	if result.Usage != nil {
+		usagePrompt = result.Usage.PromptTokens
+		usageCompletion = result.Usage.CompletionTokens
+		usageTotal = result.Usage.TotalTokens
+	}
+	_, err := tx.Exec(
+		query,
+		result.ID,
+		result.TaskID,
+		result.UserID,
+		result.TaskType,
+		string(result.Status),
+		result.ErrorMessage,
+		result.Output,
+		usagePrompt,
+		usageCompletion,
+		usageTotal,
+		result.CreatedAt,
+		nil,
+	)
+	return err
 }
 
 func scanTask(scanner interface{ Scan(dest ...any) error }) (model.Task, error) {
@@ -1054,6 +1214,43 @@ func scanTask(scanner interface{ Scan(dest ...any) error }) (model.Task, error) 
 		}
 	}
 	return t, nil
+}
+
+func scanTaskResult(scanner interface{ Scan(dest ...any) error }) (model.TaskResult, error) {
+	var (
+		r                                        model.TaskResult
+		usagePrompt, usageCompletion, usageTotal sql.NullInt64
+	)
+	if err := scanner.Scan(
+		&r.ID,
+		&r.TaskID,
+		&r.UserID,
+		&r.TaskType,
+		&r.Status,
+		&r.ErrorMessage,
+		&r.Output,
+		&usagePrompt,
+		&usageCompletion,
+		&usageTotal,
+		&r.CreatedAt,
+	); err != nil {
+		return model.TaskResult{}, err
+	}
+	if usagePrompt.Valid || usageCompletion.Valid || usageTotal.Valid {
+		r.Usage = &model.TokenUsage{}
+		if usagePrompt.Valid {
+			r.Usage.PromptTokens = int(usagePrompt.Int64)
+		}
+		if usageCompletion.Valid {
+			r.Usage.CompletionTokens = int(usageCompletion.Int64)
+		}
+		if usageTotal.Valid {
+			r.Usage.TotalTokens = int(usageTotal.Int64)
+		} else {
+			r.Usage.TotalTokens = r.Usage.PromptTokens + r.Usage.CompletionTokens
+		}
+	}
+	return r, nil
 }
 
 func nullableString(s string) any {
@@ -1297,6 +1494,34 @@ func (s *Store) selectEventsSQL(withTask bool) string {
 		return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events WHERE task_id=` + s.ph(1) + ` ORDER BY at ASC, id ASC`
 	}
 	return `SELECT id, task_id, from_status, to_status, reason, container_id, at FROM task_events ORDER BY at ASC, id ASC`
+}
+
+func (s *Store) insertTaskResultSQL() string {
+	if s.driver == "postgres" {
+		return `INSERT INTO task_results (
+id, task_id, user_id, task_type, status, error_message, output,
+usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
+) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `)
+ON CONFLICT (task_id) DO NOTHING`
+	}
+	return `INSERT INTO task_results (
+id, task_id, user_id, task_type, status, error_message, output,
+usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
+) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `)
+ON CONFLICT(task_id) DO NOTHING`
+}
+
+func (s *Store) selectPendingTaskResultsSQL() string {
+	return `SELECT id, task_id, user_id, task_type, status, error_message, output,
+usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at
+FROM task_results
+WHERE delivered_at IS NULL
+ORDER BY created_at ASC, id ASC
+LIMIT ` + s.ph(1)
+}
+
+func (s *Store) markTaskResultDeliveredSQL() string {
+	return `UPDATE task_results SET delivered_at=` + s.ph(1) + ` WHERE id=` + s.ph(2) + ` AND delivered_at IS NULL`
 }
 
 func (s *Store) pruneTaskEventsSQL() string {

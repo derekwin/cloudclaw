@@ -49,6 +49,8 @@ func main() {
 		err = runCmd(os.Args[2:])
 	case "task":
 		err = taskCmd(os.Args[2:])
+	case "result":
+		err = resultCmd(os.Args[2:])
 	case "user-data":
 		err = userDataCmd(os.Args[2:])
 	case "queue-length":
@@ -376,6 +378,34 @@ func userDataPruneOpencodeRuntimeCmd(args []string) error {
 	})
 }
 
+func resultCmd(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: cloudclaw result <dequeue>")
+	}
+	switch args[0] {
+	case "dequeue":
+		return resultDequeueCmd(args[1:])
+	default:
+		return fmt.Errorf("unknown result command: %s", args[0])
+	}
+}
+
+func resultDequeueCmd(args []string) error {
+	fs := flag.NewFlagSet("result dequeue", flag.ContinueOnError)
+	sf := bindCommonStoreFlags(fs)
+	limit := fs.Int("limit", 20, "max number of result items to dequeue")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return withClient(sf, func(cli *cloudclaw.Client) error {
+		items, err := cli.DequeueTaskResults(*limit)
+		if err != nil {
+			return err
+		}
+		return printJSON(items)
+	})
+}
+
 func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -388,6 +418,7 @@ func usage() {
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
+	  cloudclaw result dequeue [--limit 20]
 	  cloudclaw user-data prune-opencode-runtime
 	  cloudclaw queue-length
 	  cloudclaw container-status

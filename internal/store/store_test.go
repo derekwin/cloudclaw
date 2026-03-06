@@ -409,6 +409,91 @@ func TestPruneOpencodeRuntimeArtifacts(t *testing.T) {
 	}
 }
 
+func TestDequeueTaskResultsSuccess(t *testing.T) {
+	s := newTestStore(t)
+	task, err := s.SubmitTask(SubmitTaskInput{
+		UserID:     "u1",
+		TaskType:   "smoke",
+		Input:      "hello",
+		MaxRetries: 0,
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	picked, err := s.DequeueForRun("container-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	if picked == nil || picked.ID != task.ID {
+		t.Fatalf("unexpected picked task: %+v", picked)
+	}
+
+	usage := model.TokenUsage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3}
+	if err := s.MarkTaskSucceeded(task.ID, "container-1", usage, "done"); err != nil {
+		t.Fatalf("mark success: %v", err)
+	}
+
+	items, err := s.DequeueTaskResults(10)
+	if err != nil {
+		t.Fatalf("dequeue results: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 result item, got %d", len(items))
+	}
+	got := items[0]
+	if got.TaskID != task.ID || got.UserID != "u1" || got.TaskType != "smoke" {
+		t.Fatalf("unexpected result identity: %+v", got)
+	}
+	if got.Status != model.StatusSuccess {
+		t.Fatalf("expected success result, got %s", got.Status)
+	}
+	if got.Output != "done" {
+		t.Fatalf("unexpected output: %q", got.Output)
+	}
+	if got.Usage == nil || got.Usage.TotalTokens != 3 {
+		t.Fatalf("unexpected usage: %+v", got.Usage)
+	}
+
+	again, err := s.DequeueTaskResults(10)
+	if err != nil {
+		t.Fatalf("dequeue results second time: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("expected empty second dequeue, got %d", len(again))
+	}
+}
+
+func TestDequeueTaskResultsRetryDoesNotEmitTerminalResult(t *testing.T) {
+	s := newTestStore(t)
+	task, err := s.SubmitTask(SubmitTaskInput{
+		UserID:     "u1",
+		TaskType:   "smoke",
+		Input:      "hello",
+		MaxRetries: 2,
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	picked, err := s.DequeueForRun("container-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	if picked == nil || picked.ID != task.ID {
+		t.Fatalf("unexpected picked task: %+v", picked)
+	}
+
+	if err := s.MarkTaskRetryOrFail(task.ID, "container-1", "boom"); err != nil {
+		t.Fatalf("mark retry: %v", err)
+	}
+	items, err := s.DequeueTaskResults(10)
+	if err != nil {
+		t.Fatalf("dequeue results: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no terminal result for retry, got %d", len(items))
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	d := t.TempDir()

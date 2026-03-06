@@ -707,6 +707,7 @@ Usage:
 Groups:
   home   set <path> | show
   config path | show | edit | import <file> | reset | init-full | help
+  result dequeue [limit]
   db     prune-opencode-runtime
   pool   start | stop | restart | status
   runner start | stop | restart | status | logs [lines]
@@ -723,6 +724,7 @@ Shortcuts:
 
 Legacy aliases (compatible):
   set-home <path>, config-path, show-config, config-help
+  dequeue-results [limit]
   prune-opencode-runtime
   start-pool, stop-pool, start, stop
 
@@ -823,6 +825,32 @@ cmd_db() {
   esac
 }
 
+cmd_result() {
+  local action="${1:-dequeue}"
+  local arg="${2:-20}"
+  case "$action" in
+    dequeue)
+      ensure_dirs
+      if [ ! -x "$CLOUDCLAW_BIN" ]; then
+        die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
+      fi
+      cmd=(
+        "$CLOUDCLAW_BIN" result dequeue
+        --data-dir "$DATA_DIR"
+        --db-driver "$DB_DRIVER"
+        --limit "$arg"
+      )
+      if [ -n "$DB_DSN" ]; then
+        cmd+=(--db-dsn "$DB_DSN")
+      fi
+      "${cmd[@]}"
+      ;;
+    *)
+      die "unknown result action: $action (use: dequeue [limit])"
+      ;;
+  esac
+}
+
 cmd_runner() {
   local action="${1:-status}"
   local arg="${2:-}"
@@ -870,6 +898,7 @@ cmd_shortcut() {
       edit_config_hint
       print_runtime_config_paths
       ;;
+    dequeue-results) cmd_result dequeue "${arg1:-20}" ;;
     prune-opencode-runtime) prune_opencode_userdata ;;
     start-pool) start_pool ;;
     stop-pool) stop_pool ;;
@@ -888,6 +917,7 @@ main() {
   case "$group" in
     home) cmd_home "$action" "$arg" ;;
     config) cmd_config "$action" "$arg" ;;
+    result) cmd_result "$action" "$arg" ;;
     db) cmd_db "$action" ;;
     pool) cmd_pool "$action" ;;
     runner) cmd_runner "$action" "$arg" ;;
