@@ -22,7 +22,7 @@ bash deploy/server/cloudclawctl.sh up
 - 公共共享配置（所有 opencode 容器共用）：
   - `./cloudclaw_data/shared/opencode`
   - 容器内映射为 `~/.config/opencode`
-  - `init` 会优先尝试从镜像提取默认配置；若镜像未输出配置文件，则写入最小配置骨架（你手动补充 model/provider）
+  - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；复制不到再尝试镜像提取；最后兜底最小配置骨架
 - 用户私有运行时数据：
   - `./cloudclaw_data/user-runtime/<user_id>/opencode/*`
   - 容器内映射为 `~/.local/share/opencode`
