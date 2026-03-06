@@ -58,6 +58,7 @@ func TestPersistPrunesTransientArtifactsInCopyMode(t *testing.T) {
 	store := &captureStore{}
 	manager, err := NewLocalManager(LocalManagerConfig{
 		Store:            store,
+		RuntimeName:      "opencode",
 		SharedSkillsMode: "copy",
 	})
 	if err != nil {
@@ -127,6 +128,7 @@ func TestPrepareAndPersistEphemeralWorkspaceState(t *testing.T) {
 	store := &captureStore{runDir: runDir}
 	manager, err := NewLocalManager(LocalManagerConfig{
 		Store:          store,
+		RuntimeName:    "opencode",
 		WorkspaceState: "ephemeral",
 	})
 	if err != nil {
@@ -167,6 +169,7 @@ func TestPersistKeepsSharedSkillsInMountMode(t *testing.T) {
 	store := &captureStore{}
 	manager, err := NewLocalManager(LocalManagerConfig{
 		Store:            store,
+		RuntimeName:      "opencode",
 		SharedSkillsMode: "mount",
 	})
 	if err != nil {
@@ -206,6 +209,7 @@ func TestEphemeralModeCopiesUserRuntimeInAndOut(t *testing.T) {
 	store := &captureStore{runDir: runDir}
 	manager, err := NewLocalManager(LocalManagerConfig{
 		Store:          store,
+		RuntimeName:    "opencode",
 		WorkspaceState: "ephemeral",
 		UserRuntimeDir: userRuntimeDir,
 	})
@@ -264,6 +268,7 @@ func TestEphemeralPersistKeepsExistingRuntimeWhenRunStateMissing(t *testing.T) {
 	store := &captureStore{runDir: runDir}
 	manager, err := NewLocalManager(LocalManagerConfig{
 		Store:          store,
+		RuntimeName:    "opencode",
 		WorkspaceState: "ephemeral",
 		UserRuntimeDir: userRuntimeDir,
 	})
@@ -293,5 +298,53 @@ func TestEphemeralPersistKeepsExistingRuntimeWhenRunStateMissing(t *testing.T) {
 	}
 	if string(b) != "keep" {
 		t.Fatalf("unexpected sentinel content after persist: %q", string(b))
+	}
+}
+
+func TestEphemeralModeCopiesClaudeRuntimeInAndOut(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "runs", "tc-attempt-1")
+	userRuntimeDir := filepath.Join(root, "user-runtime")
+
+	store := &captureStore{runDir: runDir}
+	manager, err := NewLocalManager(LocalManagerConfig{
+		Store:          store,
+		RuntimeName:    "claudecode",
+		WorkspaceState: "ephemeral",
+		UserRuntimeDir: userRuntimeDir,
+	})
+	if err != nil {
+		t.Fatalf("new local manager: %v", err)
+	}
+
+	userDir := filepath.Join(userRuntimeDir, safeUserRuntimeName("claude:u"), "claudecode")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatalf("mkdir user runtime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, ".claude.json"), []byte("state1"), 0o644); err != nil {
+		t.Fatalf("write user runtime seed: %v", err)
+	}
+
+	prepared, err := manager.Prepare(model.Task{ID: "tc", UserID: "claude:u", Attempts: 1})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if prepared != runDir {
+		t.Fatalf("expected run dir %s, got %s", runDir, prepared)
+	}
+	runState := filepath.Join(runDir, ".claudecode-home")
+	if _, err := os.Stat(filepath.Join(runState, ".claude.json")); err != nil {
+		t.Fatalf("expected claude runtime copied into run dir, err=%v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(runState, "session.json"), []byte("s1"), 0o644); err != nil {
+		t.Fatalf("write run state mutation: %v", err)
+	}
+
+	if err := manager.Persist(model.Task{ID: "tc", UserID: "claude:u"}, runDir); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(userDir, "session.json")); err != nil {
+		t.Fatalf("expected claude runtime copied back to user runtime dir, err=%v", err)
 	}
 }

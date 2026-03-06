@@ -24,11 +24,17 @@ bash deploy/server/cloudclawctl.sh up
   - `./cloudclaw_data/shared/opencode`
   - 容器内默认挂载到 `/workspace/.config/opencode`（可用 `OPENCODE_CONFIG_MOUNT_PATH` 覆盖）
   - `init` 在目录为空时优先从宿主 `~/.config/opencode` 复制；如果宿主没有，则在宿主安装 opencode
+- 公共共享配置（所有 claudecode 容器共用）：
+  - `./cloudclaw_data/shared/claudecode/config.json`
+  - 容器内默认挂载到 `/workspace/.claudecode/config.json`
 - 用户私有运行时数据：
-  - `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/opencode/*`
+  - opencode: `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/opencode/*`
+  - claudecode: `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/claudecode/*`
   - 不直接挂载到容器；任务执行时采用 `runDir` copy-in/copy-out：
-  - `Prepare`：用户私有目录 -> `runDir/.opencode-home/.local/share/opencode`
-  - `Persist`：`runDir/.opencode-home/.local/share/opencode` -> 用户私有目录
+  - opencode `Prepare`：用户私有目录 -> `runDir/.opencode-home/.local/share/opencode`
+  - opencode `Persist`：`runDir/.opencode-home/.local/share/opencode` -> 用户私有目录
+  - claudecode `Prepare`：用户私有目录 -> `runDir/.claudecode-home`
+  - claudecode `Persist`：`runDir/.claudecode-home` -> 用户私有目录
 
 ## 常用命令
 
@@ -89,6 +95,6 @@ bash deploy/server/cloudclawctl.sh result get <task_id>
 - `AGENT_RUNTIME` 必填（`opencode` 或 `claudecode`）
 - `CC_HOME` 默认 `./cloudclaw_data`
 - `up` 实际执行：`install` +（配置缺失时）`init` + `pool start` + `runner start`
-- opencode 默认：
+- 运行模式默认（opencode + claudecode）：
   - `WORKSPACE_STATE_MODE=ephemeral`
   - `WORKSPACE_MODE=mount`

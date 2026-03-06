@@ -583,7 +583,6 @@ start_pool() {
       )
     else
       env_args+=(
-        "-e" "CLAUDECODE_HOME=${RUNTIME_CONFIG_MOUNT_PATH}"
         "-e" "CLAUDECODE_CONFIG_PATH=$(runtime_config_mount_file)"
         "-e" "CLAUDECODE_EXEC_MODE=${CLAUDECODE_EXEC_MODE:-gateway}"
       )
@@ -690,19 +689,11 @@ start_cloudclaw() {
   log "starting cloudclaw runner"
   workspace_state_mode="${WORKSPACE_STATE_MODE:-}"
   if [ -z "$workspace_state_mode" ]; then
-    if [ "$RUNTIME_NAME" = "opencode" ]; then
-      workspace_state_mode="ephemeral"
-    else
-      workspace_state_mode="db"
-    fi
+    workspace_state_mode="ephemeral"
   fi
   workspace_mode="${WORKSPACE_MODE:-}"
   if [ -z "$workspace_mode" ]; then
-    if [ "$RUNTIME_NAME" = "opencode" ]; then
-      workspace_mode="mount"
-    else
-      workspace_mode="copy"
-    fi
+    workspace_mode="mount"
   fi
 
   cmd=(
@@ -893,9 +884,9 @@ Environment overrides:
   AGENT_ENV_FILE (optional env file path for sensitive vars like API keys)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   WORKSPACE_MOUNT_PATH (default: /workspace/cloudclaw/runs; container mount path for runDir mount mode)
-  WORKSPACE_MODE (optional: mount|copy; default: opencode=mount, claudecode=copy)
+  WORKSPACE_MODE (optional: mount|copy; default: mount)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
-  WORKSPACE_STATE_MODE (optional: db|ephemeral; default: opencode=ephemeral, claudecode=db)
+  WORKSPACE_STATE_MODE (optional: db|ephemeral; default: ephemeral)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
   DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_claudecode_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
