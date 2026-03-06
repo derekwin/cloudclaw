@@ -39,14 +39,7 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_picoclaw_task.sh}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
-PICO_MODEL_NAME="${PICO_MODEL_NAME:-default}"
-PICO_MODEL="${PICO_MODEL:-${OPENROUTER_MODEL:-openai/gpt-5.2}}"
-PICO_API_BASE="${PICO_API_BASE:-}"
-PICO_API_KEY="${PICO_API_KEY:-${OPENROUTER_API_KEY:-}}"
-PICO_REQUEST_TIMEOUT="${PICO_REQUEST_TIMEOUT:-300}"
-PICOCLAW_CONFIG_SOURCE="${PICOCLAW_CONFIG_SOURCE:-}"
 PICOCLAW_CONFIG_MOUNT_PATH="${PICOCLAW_CONFIG_MOUNT_PATH:-/workspace/.picoclaw}"
-PICOCLAW_CONFIG_RESET="${PICOCLAW_CONFIG_RESET:-0}"
 OWNER_UID="${PICOCLAW_OWNER_UID:-${SUDO_UID:-$(id -u)}}"
 OWNER_GID="${PICOCLAW_OWNER_GID:-${SUDO_GID:-$(id -g)}}"
 
@@ -125,73 +118,20 @@ ensure_dirs() {
   mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_PICO_DIR" "$DATA_DIR" "$LOG_DIR" "$RUN_DIR"
 }
 
-json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
-}
-
-render_managed_picoclaw_config() {
-  local model_name_esc model_esc api_base_esc api_key_esc
-  local api_base_json="" api_key_json=""
-  model_name_esc="$(json_escape "$PICO_MODEL_NAME")"
-  model_esc="$(json_escape "$PICO_MODEL")"
-  if [ -n "${PICO_API_BASE:-}" ]; then
-    api_base_esc="$(json_escape "$PICO_API_BASE")"
-    api_base_json="$(printf ',\n      "api_base": "%s"' "$api_base_esc")"
-  fi
-  if [ -n "${PICO_API_KEY:-}" ]; then
-    api_key_esc="$(json_escape "$PICO_API_KEY")"
-    api_key_json="$(printf ',\n      "api_key": "%s"' "$api_key_esc")"
-  fi
-
-  cat > "$SHARED_PICO_CONFIG.tmp" <<EOF
-{
-  "agents": {
-    "defaults": {
-      "model_name": "${model_name_esc}",
-      "model": "${model_name_esc}",
-      "workspace": "./workspace",
-      "max_tokens": 8192,
-      "temperature": 0.7,
-      "max_tool_iterations": 20
-    }
-  },
-  "model_list": [
-    {
-      "model_name": "${model_name_esc}",
-      "name": "${model_name_esc}",
-      "model": "${model_esc}",
-      "request_timeout": ${PICO_REQUEST_TIMEOUT}${api_base_json}${api_key_json}
-    }
-  ]
-}
-EOF
-  mv -f "$SHARED_PICO_CONFIG.tmp" "$SHARED_PICO_CONFIG"
-}
-
-prepare_picoclaw_config() {
+ensure_picoclaw_config_ready() {
   ensure_dirs
-  if [ "$PICOCLAW_CONFIG_RESET" = "1" ]; then
-    rm -f "$SHARED_PICO_CONFIG"
-    log "reset managed/shared picoclaw config"
+  if [ ! -s "$SHARED_PICO_CONFIG" ]; then
+    die "missing config: $SHARED_PICO_CONFIG (run: bash $0 config init-full)"
   fi
+}
 
-  if [ -n "${PICOCLAW_CONFIG_SOURCE:-}" ]; then
-    if [ ! -f "$PICOCLAW_CONFIG_SOURCE" ]; then
-      echo "PICOCLAW_CONFIG_SOURCE not found: $PICOCLAW_CONFIG_SOURCE" >&2
-      exit 1
-    fi
-    cp "$PICOCLAW_CONFIG_SOURCE" "$SHARED_PICO_CONFIG"
-    log "using external picoclaw config: $PICOCLAW_CONFIG_SOURCE"
-    return
-  fi
-
+ensure_picoclaw_config_for_up() {
+  ensure_dirs
   if [ -s "$SHARED_PICO_CONFIG" ]; then
-    log "reusing existing picoclaw config: $SHARED_PICO_CONFIG"
     return
   fi
-
-  render_managed_picoclaw_config
-  log "generated managed picoclaw config: $SHARED_PICO_CONFIG"
+  log "config not found, generating full template (same as: $0 init)"
+  init_full_config
 }
 
 show_config_path() {
@@ -220,25 +160,70 @@ import_config() {
 }
 
 reset_config() {
-  ensure_dirs
-  if [ -f "$SHARED_PICO_CONFIG" ]; then
-    cp "$SHARED_PICO_CONFIG" "$SHARED_PICO_CONFIG.bak"
-    log "backup created: $SHARED_PICO_CONFIG.bak"
-  fi
-  render_managed_picoclaw_config
-  log "reset to managed config: $SHARED_PICO_CONFIG"
+  init_full_config
+  log "reset to full template config: $SHARED_PICO_CONFIG"
 }
 
 edit_config() {
   ensure_dirs
-  if [ ! -f "$SHARED_PICO_CONFIG" ]; then
-    render_managed_picoclaw_config
+  if [ ! -s "$SHARED_PICO_CONFIG" ]; then
+    log "config not found, initializing full template first"
+    init_full_config
   fi
   editor="${EDITOR:-vi}"
   if ! command -v "$editor" >/dev/null 2>&1; then
     die "editor not found: $editor (set EDITOR to a valid command)"
   fi
   "$editor" "$SHARED_PICO_CONFIG"
+}
+
+init_full_config() {
+  ensure_dirs
+  ensure_runner_image
+
+  if [ -f "$SHARED_PICO_CONFIG" ]; then
+    cp "$SHARED_PICO_CONFIG" "$SHARED_PICO_CONFIG.bak"
+    log "backup created: $SHARED_PICO_CONFIG.bak"
+  fi
+
+  docker run --rm --entrypoint /bin/sh "$RUNNER_IMAGE" -lc '
+set -eu
+HOME=/tmp/picoclaw-home
+mkdir -p "$HOME"
+
+if command -v picoclaw >/dev/null 2>&1; then
+  picoclaw onboard </dev/null >/tmp/picoclaw-onboard.log 2>&1 || true
+fi
+
+for p in \
+  "$HOME/.picoclaw/config.json" \
+  "/root/.picoclaw/config.json" \
+  "/app/config/config.example.json" \
+  "/config/config.example.json" \
+  "/workspace/config/config.example.json"; do
+  if [ -s "$p" ]; then
+    cat "$p"
+    exit 0
+  fi
+done
+
+example="$(find / -maxdepth 5 -type f -name config.example.json 2>/dev/null | head -n 1 || true)"
+if [ -n "$example" ] && [ -s "$example" ]; then
+  cat "$example"
+  exit 0
+fi
+
+echo "unable to generate full config from picoclaw image" >&2
+exit 1
+' > "$SHARED_PICO_CONFIG.tmp"
+
+if [ ! -s "$SHARED_PICO_CONFIG.tmp" ]; then
+  rm -f "$SHARED_PICO_CONFIG.tmp"
+  die "generated config is empty"
+fi
+
+mv -f "$SHARED_PICO_CONFIG.tmp" "$SHARED_PICO_CONFIG"
+log "initialized full config template: $SHARED_PICO_CONFIG"
 }
 
 edit_config_hint() {
@@ -251,6 +236,9 @@ Edit this file to configure full sections like:
   - model_list / providers
   - tools (mcp / skills / web / exec ...)
   - channels / heartbeat / gateway
+
+Optional: generate a full template from picoclaw first:
+  bash $0 config init-full
 
 Then run:
   bash $0 pool start
@@ -296,14 +284,7 @@ install_all() {
 start_pool() {
   ensure_runner_image
   ensure_dirs
-  prepare_picoclaw_config
-
-  if [ -z "${PICO_API_KEY:-}" ]; then
-    case "$PICO_MODEL" in
-      ollama/*|vllm/*) ;;
-      *) log "warning: PICO_API_KEY is empty for model=$PICO_MODEL; set PICO_* env vars before up if you use cloud providers" ;;
-    esac
-  fi
+  ensure_picoclaw_config_ready
 
   for i in $(seq 1 "$POOL_SIZE"); do
     name="${POOL_NAME_PREFIX}-${i}"
@@ -314,18 +295,9 @@ start_pool() {
 
     log "creating container: $name"
     env_args=(
-      "-e" "PICO_MODEL_NAME=${PICO_MODEL_NAME}"
-      "-e" "PICO_MODEL=${PICO_MODEL}"
-      "-e" "PICO_REQUEST_TIMEOUT=${PICO_REQUEST_TIMEOUT}"
       "-e" "PICOCLAW_HOME=${PICOCLAW_CONFIG_MOUNT_PATH}"
       "-e" "PICOCLAW_CONFIG=${PICOCLAW_CONFIG_MOUNT_PATH}/config.json"
     )
-    if [ -n "${PICO_API_BASE:-}" ]; then
-      env_args+=("-e" "PICO_API_BASE=${PICO_API_BASE}")
-    fi
-    if [ -n "${PICO_API_KEY:-}" ]; then
-      env_args+=("-e" "PICO_API_KEY=${PICO_API_KEY}")
-    fi
 
     docker run -d \
       --name "$name" \
@@ -483,13 +455,14 @@ Usage:
 
 Groups:
   home   set <path> | show
-  config path | show | edit | import <file> | reset | help
+  config path | show | edit | import <file> | reset | init-full | help
   pool   start | stop | restart | status
   runner start | stop | restart | status | logs [lines]
 
 Shortcuts:
+  init        Generate full picoclaw config template
   install     Build cloudclaw binary + runner image
-  up          install + pool start + runner start
+  up          install + init(if missing) + pool start + runner start
   down        runner stop + pool stop
   restart     down + up
   status      Show runner + pool + config status
@@ -502,8 +475,9 @@ Legacy aliases (compatible):
 
 Examples:
   $0 home set /data/cloudclaw
-  $0 config import /path/full-config.json
+  $0 init
   $0 config edit
+  $0 config import /path/full-config.json
   $0 pool restart
   $0 runner logs 200
   $0 smoke
@@ -518,22 +492,14 @@ Environment overrides:
   FALLBACK_BASE_IMAGE (default: ghcr.io/sipeed/picoclaw:latest)
   RUNNER_IMAGE (default: cloudclaw/picoclaw-runner:latest)
   PICOCLAW_OWNER_UID / PICOCLAW_OWNER_GID (optional container user id)
-  PICO_MODEL_NAME (default: default)
-  PICO_MODEL (default: openai/gpt-5.2)
-  PICO_API_BASE (optional; auto default for openai/openrouter/ollama/vllm)
-  PICO_API_KEY (optional for ollama/vllm local, usually required for cloud providers)
-  PICO_REQUEST_TIMEOUT (default: 300)
-  PICOCLAW_CONFIG_SOURCE (optional; use existing config.json as source of truth)
-  PICOCLAW_CONFIG_RESET (default: 0; set 1 to regenerate managed config)
   PICOCLAW_CONFIG_MOUNT_PATH (default: /workspace/.picoclaw in container)
-  OPENROUTER_API_KEY / OPENROUTER_MODEL (legacy compatibility)
   DOCKER_TASK_CMD (default: run_picoclaw_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
 
 Notes:
+  "up" will auto-run init when config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
-  cloudclaw task execution reads from mounted picoclaw config (full config supported).
-  if \$CC_HOME/shared/picoclaw/config.json exists, start-pool will reuse it (won't overwrite).
+  cloudclaw task execution only reads mounted picoclaw config.
 USAGE
 }
 
@@ -566,12 +532,13 @@ cmd_config() {
     edit) edit_config ;;
     import) import_config "$arg" ;;
     reset) reset_config ;;
+    init-full) init_full_config ;;
     help)
       edit_config_hint
       print_runtime_config_paths
       ;;
     *)
-      die "unknown config action: $action (use: path|show|edit|import|reset|help)"
+      die "unknown config action: $action (use: path|show|edit|import|reset|init-full|help)"
       ;;
   esac
 }
@@ -605,9 +572,11 @@ cmd_shortcut() {
   local arg1="${2:-}"
   local arg2="${3:-}"
   case "$action" in
+    init) init_full_config ;;
     install) install_all ;;
     up)
       install_all
+      ensure_picoclaw_config_for_up
       start_pool
       start_cloudclaw
       ;;

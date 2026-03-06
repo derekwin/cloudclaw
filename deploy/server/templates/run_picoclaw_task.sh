@@ -5,7 +5,7 @@ set -eu
 : "${CLOUDCLAW_INPUT:?missing CLOUDCLAW_INPUT}"
 : "${CLOUDCLAW_USAGE_FILE:?missing CLOUDCLAW_USAGE_FILE}"
 
-PICO_MODEL_NAME="${PICO_MODEL_NAME:-default}"
+PICO_MODEL_NAME="${PICO_MODEL_NAME:-}"
 PICOCLAW_HOME="${PICOCLAW_HOME:-/workspace/.picoclaw}"
 PICOCLAW_CONFIG="${PICOCLAW_CONFIG:-$PICOCLAW_HOME/config.json}"
 
@@ -52,7 +52,20 @@ if [ -z "$first_model_in_list" ]; then
   exit 1
 fi
 
+defaults_block="$(sed -n '/"defaults"[[:space:]]*:/,/\}[[:space:]]*,\{0,1\}[[:space:]]*$/p' "$PICOCLAW_CONFIG")"
+default_model_name="$(printf '%s\n' "$defaults_block" | sed -n 's/.*"model_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+if [ -z "$default_model_name" ]; then
+  default_model_name="$(printf '%s\n' "$defaults_block" | sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+fi
+
 selected_model="$PICO_MODEL_NAME"
+if [ -z "$selected_model" ]; then
+  selected_model="$default_model_name"
+fi
+if [ -z "$selected_model" ]; then
+  selected_model="$first_model_in_list"
+fi
+
 selected_model_re="$(printf '%s' "$selected_model" | sed -e 's/[][(){}.^$*+?|\\/]/\\&/g')"
 if ! printf '%s\n' "$model_list_block" | grep -Eq "\"(model_name|name)\"[[:space:]]*:[[:space:]]*\"$selected_model_re\""; then
   echo "model \"$selected_model\" not found in model_list, fallback to \"$first_model_in_list\"" >&2
