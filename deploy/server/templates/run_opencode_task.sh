@@ -22,13 +22,11 @@ esac
 
 TASK_HOME="$(dirname "$CLOUDCLAW_WORKSPACE")"
 SHARED_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}"
-USER_RUNTIME_HOME_BASE="${CLOUDCLAW_USER_RUNTIME_HOME_BASE:-}"
 LEGACY_WORKSPACE_HOME="$CLOUDCLAW_WORKSPACE/.opencode-home"
 DEFAULT_USER_HOME="$LEGACY_WORKSPACE_HOME"
 DEFAULT_USER_DATA_HOME="$LEGACY_WORKSPACE_HOME/.local/share"
 USER_WORKSPACE_DIR="$CLOUDCLAW_WORKSPACE"
 USER_DATA_HOME="$DEFAULT_USER_DATA_HOME"
-USE_EXTERNAL_OPENCODE_HOME=0
 TMP_ROOT="${TMPDIR:-/tmp}"
 MERGED_CONFIG_DIR=""
 stderr_log=""
@@ -45,44 +43,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [ -n "$USER_RUNTIME_HOME_BASE" ]; then
-  normalized_user_id="$(printf '%s' "${CLOUDCLAW_USER_ID:-anonymous}" | LC_ALL=C sed 's/[^A-Za-z0-9._-]/_/g')"
-  if [ -z "$normalized_user_id" ]; then
-    normalized_user_id="anonymous"
-  fi
-  user_id_hash="$(printf '%s' "${CLOUDCLAW_USER_ID:-anonymous}" | cksum | awk '{print $1}')"
-  normalized_user_id="${normalized_user_id}-${user_id_hash}"
-  USER_RUNTIME_ROOT="$USER_RUNTIME_HOME_BASE/$normalized_user_id"
-  USER_DATA_HOME="$USER_RUNTIME_ROOT"
-  USE_EXTERNAL_OPENCODE_HOME=1
-fi
-
 USER_HOME="${OPENCODE_HOME:-$DEFAULT_USER_HOME}"
 
-if [ "$OPENCODE_USER_CONFIG_FILE" = "$CLOUDCLAW_WORKSPACE/opencode.user.json" ] && [ "$USER_WORKSPACE_DIR" != "$CLOUDCLAW_WORKSPACE" ]; then
-  OPENCODE_USER_CONFIG_FILE="$USER_WORKSPACE_DIR/opencode.user.json"
-fi
-
 mkdir -p "$CLOUDCLAW_WORKSPACE" "$TASK_HOME" "$USER_HOME" "$USER_WORKSPACE_DIR" "$USER_DATA_HOME"
-
-# External user runtime home is persisted on host volume, not in task workspace DB snapshot.
-if [ "$USE_EXTERNAL_OPENCODE_HOME" = "1" ] && [ "$USER_HOME" != "$LEGACY_WORKSPACE_HOME" ]; then
-  rm -rf "$LEGACY_WORKSPACE_HOME"
-fi
 
 # Shared config is mounted from host and read by all containers.
 export HOME="$USER_HOME"
 export XDG_CONFIG_HOME="$(dirname "$OPENCODE_SHARED_CONFIG_DIR")"
-# User data is isolated per user and mapped from host user-runtime storage.
-# With XDG_DATA_HOME=<user-runtime>/<user>, opencode persists to <user-runtime>/<user>/opencode.
+# User data writes into per-task runDir (.opencode-home). Runner is responsible for
+# copying user runtime state in before task execution and syncing it back after success.
 export XDG_DATA_HOME="$USER_DATA_HOME"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 
 prune_persisted_opencode_state() {
   if [ "$OPENCODE_PERSIST_MODE" = "full" ]; then
-    return
-  fi
-  if [ "$OPENCODE_PERSIST_MODE" = "auto" ] && [ "$USE_EXTERNAL_OPENCODE_HOME" = "1" ]; then
     return
   fi
   state_root="$XDG_DATA_HOME/opencode"
@@ -160,11 +134,6 @@ fi
 
 # Prune large runtime artifacts before cloudclaw persists user data into DB.
 prune_persisted_opencode_state
-
-# Ensure legacy in-workspace home does not get written back to DB when external home is enabled.
-if [ "$USE_EXTERNAL_OPENCODE_HOME" = "1" ] && [ "$USER_HOME" != "$LEGACY_WORKSPACE_HOME" ]; then
-  rm -rf "$LEGACY_WORKSPACE_HOME"
-fi
 
 prompt_chars=$(printf "%s" "$CLOUDCLAW_INPUT" | wc -c | tr -d ' ')
 resp_chars=$(wc -c < "$CLOUDCLAW_WORKSPACE/result.txt" | tr -d ' ')

@@ -83,6 +83,7 @@ func runCmd(args []string) error {
 	sharedSkillsMode := fs.String("shared-skills-mode", "copy", "shared skills mode: copy|mount")
 	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
 	workspaceStateMode := fs.String("workspace-state-mode", "db", "workspace state mode: db|ephemeral (none as alias)")
+	userRuntimeDir := fs.String("user-runtime-dir", "", "host directory for per-user runtime state in ephemeral workspace mode")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
 	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
@@ -130,6 +131,7 @@ func runCmd(args []string) error {
 		SharedSkillsDir:  strings.TrimSpace(*sharedSkillsDir),
 		SharedSkillsMode: strings.TrimSpace(*sharedSkillsMode),
 		WorkspaceState:   strings.TrimSpace(*workspaceStateMode),
+		UserRuntimeDir:   strings.TrimSpace(*userRuntimeDir),
 	})
 	if err != nil {
 		return err
