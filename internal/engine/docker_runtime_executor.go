@@ -11,7 +11,7 @@ import (
 	"cloudclaw/internal/model"
 )
 
-type DockerPicoclawExecutor struct {
+type DockerRuntimeExecutor struct {
 	Docker              dockerutil.Docker
 	RemoteBaseDir       string
 	TaskCommand         string
@@ -21,11 +21,11 @@ type DockerPicoclawExecutor struct {
 	RunDirContainerBase string
 }
 
-func (e *DockerPicoclawExecutor) Name() string {
-	return "docker-picoclaw"
+func (e *DockerRuntimeExecutor) Name() string {
+	return "docker-runtime"
 }
 
-func (e *DockerPicoclawExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
+func (e *DockerRuntimeExecutor) Execute(ctx context.Context, containerID string, task model.Task, workspaceDir string) (model.TokenUsage, error) {
 	if strings.TrimSpace(containerID) == "" {
 		return model.TokenUsage{}, fmt.Errorf("container id is required for docker executor")
 	}
@@ -78,7 +78,7 @@ func (e *DockerPicoclawExecutor) Execute(ctx context.Context, containerID string
 	return resolveUsage(workspaceDir, task), nil
 }
 
-func (e *DockerPicoclawExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
+func (e *DockerRuntimeExecutor) renderCommand(task model.Task, layout remoteTaskLayout) string {
 	return renderTaskCommand(task, e.TaskCommand, layout, e.SharedSkillsDir)
 }
 
@@ -86,7 +86,7 @@ func isWorkspaceModeMount(mode string) bool {
 	return strings.EqualFold(strings.TrimSpace(mode), "mount")
 }
 
-func (e *DockerPicoclawExecutor) layoutForMountedWorkspace(workspaceDir string) (remoteTaskLayout, error) {
+func (e *DockerRuntimeExecutor) layoutForMountedWorkspace(workspaceDir string) (remoteTaskLayout, error) {
 	hostBase := strings.TrimSpace(e.RunDirHostBase)
 	containerBase := strings.TrimSpace(e.RunDirContainerBase)
 	if hostBase == "" || containerBase == "" {

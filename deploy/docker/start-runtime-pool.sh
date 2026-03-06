@@ -2,9 +2,9 @@
 set -euo pipefail
 
 COUNT="${1:-3}"
-IMAGE="${2:-docker.io/sipeed/picoclaw:latest}"
-NAME_PREFIX="${3:-picoclaw-agent}"
-LABEL="${4:-app=picoclaw-agent}"
+IMAGE="${2:-opencode:latest}"
+NAME_PREFIX="${3:-opencode-agent}"
+LABEL="${4:-app=opencode-agent}"
 
 for i in $(seq 1 "$COUNT"); do
   name="${NAME_PREFIX}-${i}"

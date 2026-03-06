@@ -29,6 +29,13 @@ type commonStoreFlags struct {
 	dbDSN    *string
 }
 
+const (
+	defaultK8sLabelSelector    = "app=opencode-agent"
+	defaultDockerLabelSelector = "app=opencode-agent"
+	defaultDockerImage         = "opencode:latest"
+	defaultDockerNamePrefix    = "opencode-agent"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -73,21 +80,21 @@ func runCmd(args []string) error {
 	sharedSkillsMountPath := fs.String("shared-skills-mount-path", "/workspace/.cloudclaw_shared_skills", "shared skills path inside pod/container when --shared-skills-mode=mount")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
-	executorMode := fs.String("executor", "", "executor mode (required): k8s-picoclaw|docker-picoclaw|docker-openclaw")
-	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for picoclaw pods")
+	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
+	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for runtime pods")
 	k8sContext := fs.String("k8s-context", "", "optional kubernetes context")
-	k8sLabelSelector := fs.String("k8s-label-selector", "app=picoclaw-agent", "label selector for picoclaw pods")
+	k8sLabelSelector := fs.String("k8s-label-selector", defaultK8sLabelSelector, "label selector for runtime pods")
 	k8sKubectl := fs.String("k8s-kubectl", "kubectl", "kubectl binary path")
 	k8sRemoteDir := fs.String("k8s-remote-dir", "/workspace/cloudclaw", "task workspace base directory inside pod")
 	k8sTaskCmd := fs.String("k8s-task-cmd", "", "task command executed inside selected pod; supports {{TASK_DIR}} {{TASK_FILE}} {{USAGE_FILE}} {{USERDATA_DIR}}")
 	dockerBin := fs.String("docker-bin", "docker", "docker binary path")
-	dockerLabelSelector := fs.String("docker-label-selector", "app=picoclaw-agent", "docker container label selector, supports comma separated key=value")
+	dockerLabelSelector := fs.String("docker-label-selector", defaultDockerLabelSelector, "docker container label selector, supports comma separated key=value")
 	dockerRemoteDir := fs.String("docker-remote-dir", "/tmp/cloudclaw", "task workspace base directory inside container")
 	dockerTaskCmd := fs.String("docker-task-cmd", "", "task command executed inside selected container; supports {{TASK_DIR}} {{TASK_FILE}} {{USAGE_FILE}} {{USERDATA_DIR}}")
 	dockerManagePool := fs.Bool("docker-manage-pool", false, "whether cloudclaw should ensure docker prewarm pool")
 	dockerPoolSize := fs.Int("docker-pool-size", 3, "target container count when --docker-manage-pool=true")
-	dockerImage := fs.String("docker-image", "ghcr.io/sipeed/picoclaw:latest", "docker image for prewarm pool")
-	dockerNamePrefix := fs.String("docker-name-prefix", "picoclaw-agent", "container name prefix for prewarm pool")
+	dockerImage := fs.String("docker-image", defaultDockerImage, "docker image for prewarm pool")
+	dockerNamePrefix := fs.String("docker-name-prefix", defaultDockerNamePrefix, "container name prefix for prewarm pool")
 	dockerInitCmd := fs.String("docker-init-cmd", "sleep infinity", "container init command when creating prewarm pool")
 	eventRetentionPerTask := fs.Int("event-retention-per-task", 2000, "max number of task events retained per task")
 	maxUserDataBytes := fs.Int64("max-user-data-bytes", 256<<20, "max total bytes per user's persisted workspace data")
@@ -96,8 +103,9 @@ func runCmd(args []string) error {
 		return err
 	}
 	if strings.TrimSpace(*executorMode) == "" {
-		return fmt.Errorf("executor is required: k8s-picoclaw|docker-picoclaw|docker-openclaw")
+		return fmt.Errorf("executor is required: k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
 	}
+	applyExecutorRuntimeDefaults(*executorMode, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix)
 
 	s, err := store.NewWithConfig(store.Config{
 		BaseDir:               *sf.dataDir,
@@ -124,9 +132,9 @@ func runCmd(args []string) error {
 	var ex engine.Executor
 	var pool portsPool
 	switch *executorMode {
-	case "k8s-picoclaw":
+	case "k8s-opencode", "k8s-claudecode":
 		if strings.TrimSpace(*k8sTaskCmd) == "" {
-			return fmt.Errorf("k8s-task-cmd is required for k8s-picoclaw executor")
+			return fmt.Errorf("k8s-task-cmd is required for %s executor", *executorMode)
 		}
 		pool, err = pooladapter.NewK8s(pooladapter.K8sOptions{
 			Namespace:     *k8sNamespace,
@@ -137,7 +145,7 @@ func runCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		ex = &engine.K8sPicoclawExecutor{
+		runtimeExecutor := engine.K8sRuntimeExecutor{
 			Kubectl: k8sutil.Kubectl{
 				Namespace: *k8sNamespace,
 				Context:   *k8sContext,
@@ -147,9 +155,14 @@ func runCmd(args []string) error {
 			TaskCommand:     *k8sTaskCmd,
 			SharedSkillsDir: sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
 		}
-	case "docker-picoclaw":
+		if *executorMode == "k8s-opencode" {
+			ex = &engine.K8sOpencodeExecutor{K8sRuntimeExecutor: runtimeExecutor}
+		} else {
+			ex = &engine.K8sClaudecodeExecutor{K8sRuntimeExecutor: runtimeExecutor}
+		}
+	case "docker-opencode", "docker-claudecode":
 		if strings.TrimSpace(*dockerTaskCmd) == "" {
-			return fmt.Errorf("docker-task-cmd is required for docker-picoclaw executor")
+			return fmt.Errorf("docker-task-cmd is required for %s executor", *executorMode)
 		}
 		pool, err = pooladapter.NewDocker(pooladapter.DockerOptions{
 			Binary:                   *dockerBin,
@@ -167,7 +180,7 @@ func runCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		ex = &engine.DockerPicoclawExecutor{
+		runtimeExecutor := engine.DockerRuntimeExecutor{
 			Docker:              dockerutil.Docker{Binary: *dockerBin},
 			RemoteBaseDir:       *dockerRemoteDir,
 			TaskCommand:         *dockerTaskCmd,
@@ -176,36 +189,10 @@ func runCmd(args []string) error {
 			RunDirHostBase:      workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
 			RunDirContainerBase: workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
 		}
-	case "docker-openclaw":
-		if strings.TrimSpace(*dockerTaskCmd) == "" {
-			return fmt.Errorf("docker-task-cmd is required for docker-openclaw executor")
-		}
-		pool, err = pooladapter.NewDocker(pooladapter.DockerOptions{
-			Binary:                   *dockerBin,
-			LabelSelector:            *dockerLabelSelector,
-			ManagePool:               *dockerManagePool,
-			PoolSize:                 *dockerPoolSize,
-			Image:                    *dockerImage,
-			NamePrefix:               *dockerNamePrefix,
-			InitCmd:                  *dockerInitCmd,
-			SharedSkillsHostDir:      strings.TrimSpace(*sharedSkillsDir),
-			SharedSkillsContainerDir: sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
-			WorkspaceHostDir:         workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
-			WorkspaceContainerDir:    workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
-		})
-		if err != nil {
-			return err
-		}
-		ex = &engine.DockerOpenclawExecutor{
-			DockerPicoclawExecutor: engine.DockerPicoclawExecutor{
-				Docker:              dockerutil.Docker{Binary: *dockerBin},
-				RemoteBaseDir:       *dockerRemoteDir,
-				TaskCommand:         *dockerTaskCmd,
-				SharedSkillsDir:     sharedSkillsDirForExecutor(*sharedSkillsMode, *sharedSkillsMountPath),
-				WorkspaceMode:       strings.TrimSpace(*workspaceMode),
-				RunDirHostBase:      workspaceHostDirForDocker(*workspaceMode, *sf.dataDir),
-				RunDirContainerBase: workspaceContainerDirForDocker(*workspaceMode, *workspaceMountPath),
-			},
+		if *executorMode == "docker-opencode" {
+			ex = &engine.DockerOpencodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
+		} else {
+			ex = &engine.DockerClaudecodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		}
 	default:
 		return fmt.Errorf("unknown executor mode: %s", *executorMode)
@@ -364,7 +351,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-picoclaw|docker-picoclaw|docker-openclaw]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
@@ -430,4 +417,24 @@ func workspaceContainerDirForDocker(mode, mountPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(mountPath)
+}
+
+func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix *string) {
+	mode := strings.ToLower(strings.TrimSpace(executorMode))
+	if !strings.Contains(mode, "claudecode") {
+		return
+	}
+
+	if strings.TrimSpace(*k8sLabelSelector) == defaultK8sLabelSelector {
+		*k8sLabelSelector = "app=claudecode-agent"
+	}
+	if strings.TrimSpace(*dockerLabelSelector) == defaultDockerLabelSelector {
+		*dockerLabelSelector = "app=claudecode-agent"
+	}
+	if strings.TrimSpace(*dockerImage) == defaultDockerImage {
+		*dockerImage = "claudecode:latest"
+	}
+	if strings.TrimSpace(*dockerNamePrefix) == defaultDockerNamePrefix {
+		*dockerNamePrefix = "claudecode-agent"
+	}
 }

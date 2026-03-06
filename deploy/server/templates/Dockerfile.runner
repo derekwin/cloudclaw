@@ -1,5 +1,5 @@
-ARG BASE_IMAGE=ghcr.io/sipeed/picoclaw:latest
+ARG BASE_IMAGE=opencode:latest
 FROM ${BASE_IMAGE}
 
-COPY --chmod=0755 run_picoclaw_task.sh /usr/local/bin/run_picoclaw_task.sh
-COPY --chmod=0755 run_openclaw_task.sh /usr/local/bin/run_openclaw_task.sh
+COPY --chmod=0755 run_opencode_task.sh /usr/local/bin/run_opencode_task.sh
+COPY --chmod=0755 run_claudecode_task.sh /usr/local/bin/run_claudecode_task.sh

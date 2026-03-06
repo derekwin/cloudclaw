@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LABEL="${1:-app=picoclaw-agent}"
+LABEL="${1:-app=opencode-agent}"
 
 ids=$(docker ps -aq --filter "label=$LABEL")
 if [[ -z "${ids}" ]]; then

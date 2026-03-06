@@ -68,10 +68,10 @@ func (d Docker) EnsurePool(ctx context.Context, opts EnsurePoolOptions) ([]strin
 		return nil, fmt.Errorf("docker pool image is required")
 	}
 	if strings.TrimSpace(opts.NamePrefix) == "" {
-		opts.NamePrefix = "picoclaw-agent"
+		opts.NamePrefix = "opencode-agent"
 	}
 	if strings.TrimSpace(opts.Label) == "" {
-		opts.Label = "app=picoclaw-agent"
+		opts.Label = "app=opencode-agent"
 	}
 	if opts.PoolSize <= 0 {
 		opts.PoolSize = 1

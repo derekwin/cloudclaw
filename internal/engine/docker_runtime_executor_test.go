@@ -9,7 +9,7 @@ func TestLayoutForMountedWorkspace(t *testing.T) {
 	hostBase := t.TempDir()
 	runDir := filepath.Join(hostBase, "tsk_1-attempt-1")
 
-	e := DockerPicoclawExecutor{
+	e := DockerRuntimeExecutor{
 		RunDirHostBase:      hostBase,
 		RunDirContainerBase: "/workspace/cloudclaw/runs",
 	}
@@ -29,7 +29,7 @@ func TestLayoutForMountedWorkspace(t *testing.T) {
 }
 
 func TestLayoutForMountedWorkspaceRejectsOutsideHostBase(t *testing.T) {
-	e := DockerPicoclawExecutor{
+	e := DockerRuntimeExecutor{
 		RunDirHostBase:      filepath.Join(t.TempDir(), "runs"),
 		RunDirContainerBase: "/workspace/cloudclaw/runs",
 	}

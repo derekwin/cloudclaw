@@ -5,16 +5,16 @@ set -eu
 : "${CLOUDCLAW_INPUT:?missing CLOUDCLAW_INPUT}"
 : "${CLOUDCLAW_USAGE_FILE:?missing CLOUDCLAW_USAGE_FILE}"
 
-OPENCLAW_HOME="${OPENCLAW_HOME:-/workspace/.openclaw}"
-OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}"
-OPENCLAW_EXEC_MODE="$(printf '%s' "${OPENCLAW_EXEC_MODE:-gateway}" | tr '[:upper:]' '[:lower:]')"
-OPENCLAW_SESSION_ID="${OPENCLAW_SESSION_ID:-cloudclaw-${CLOUDCLAW_TASK_ID:-task}}"
-OPENCLAW_GATEWAY_BIND="${OPENCLAW_GATEWAY_BIND:-loopback}"
-OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-8688}"
-OPENCLAW_GATEWAY_MANAGE="${OPENCLAW_GATEWAY_MANAGE:-1}"
-OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-}"
-OPENCLAW_AGENT_ID="${OPENCLAW_AGENT_ID:-}"
-OPENCLAW_TIMEOUT_SECONDS="${OPENCLAW_TIMEOUT_SECONDS:-}"
+CLAUDECODE_HOME="${CLAUDECODE_HOME:-/workspace/.claudecode}"
+CLAUDECODE_CONFIG_PATH="${CLAUDECODE_CONFIG_PATH:-$CLAUDECODE_HOME/config.json}"
+CLAUDECODE_EXEC_MODE="$(printf '%s' "${CLAUDECODE_EXEC_MODE:-gateway}" | tr '[:upper:]' '[:lower:]')"
+CLAUDECODE_SESSION_ID="${CLAUDECODE_SESSION_ID:-cloudclaw-${CLOUDCLAW_TASK_ID:-task}}"
+CLAUDECODE_GATEWAY_BIND="${CLAUDECODE_GATEWAY_BIND:-loopback}"
+CLAUDECODE_GATEWAY_PORT="${CLAUDECODE_GATEWAY_PORT:-8688}"
+CLAUDECODE_GATEWAY_MANAGE="${CLAUDECODE_GATEWAY_MANAGE:-1}"
+CLAUDECODE_GATEWAY_TOKEN="${CLAUDECODE_GATEWAY_TOKEN:-}"
+CLAUDECODE_AGENT_ID="${CLAUDECODE_AGENT_ID:-}"
+CLAUDECODE_TIMEOUT_SECONDS="${CLAUDECODE_TIMEOUT_SECONDS:-}"
 
 TASK_HOME="$(dirname "$CLOUDCLAW_WORKSPACE")"
 SHARED_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}"
@@ -39,41 +39,41 @@ if [ -n "$SHARED_DIR" ] && [ -d "$SHARED_WORKSPACE" ]; then
   fi
 fi
 
-if [ ! -s "$OPENCLAW_CONFIG_PATH" ]; then
-  echo "missing or empty openclaw config: $OPENCLAW_CONFIG_PATH" >&2
+if [ ! -s "$CLAUDECODE_CONFIG_PATH" ]; then
+  echo "missing or empty claudecode config: $CLAUDECODE_CONFIG_PATH" >&2
   exit 1
 fi
 
-mkdir -p "$OPENCLAW_HOME"
-default_cfg="$OPENCLAW_HOME/openclaw.json"
-if [ "$OPENCLAW_CONFIG_PATH" != "$default_cfg" ]; then
-  cp -f "$OPENCLAW_CONFIG_PATH" "$default_cfg"
+mkdir -p "$CLAUDECODE_HOME"
+default_cfg="$CLAUDECODE_HOME/config.json"
+if [ "$CLAUDECODE_CONFIG_PATH" != "$default_cfg" ]; then
+  cp -f "$CLAUDECODE_CONFIG_PATH" "$default_cfg"
 fi
 
-openclaw_health() {
-  if [ -n "$OPENCLAW_GATEWAY_TOKEN" ]; then
-    OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" openclaw health --token "$OPENCLAW_GATEWAY_TOKEN" >/dev/null 2>&1
+claudecode_health() {
+  if [ -n "$CLAUDECODE_GATEWAY_TOKEN" ]; then
+    CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" claudecode health --token "$CLAUDECODE_GATEWAY_TOKEN" >/dev/null 2>&1
     return $?
   fi
-  OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" openclaw health >/dev/null 2>&1
+  CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" claudecode health >/dev/null 2>&1
 }
 
 ensure_gateway() {
-  if [ "$OPENCLAW_EXEC_MODE" != "gateway" ]; then
+  if [ "$CLAUDECODE_EXEC_MODE" != "gateway" ]; then
     return 0
   fi
-  if openclaw_health; then
+  if claudecode_health; then
     return 0
   fi
-  if [ "$OPENCLAW_GATEWAY_MANAGE" = "0" ]; then
+  if [ "$CLAUDECODE_GATEWAY_MANAGE" = "0" ]; then
     return 1
   fi
 
-  OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" \
-    openclaw gateway --bind "$OPENCLAW_GATEWAY_BIND" --port "$OPENCLAW_GATEWAY_PORT" >"$TASK_HOME/openclaw-gateway.log" 2>&1 &
+  CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" \
+    claudecode gateway --bind "$CLAUDECODE_GATEWAY_BIND" --port "$CLAUDECODE_GATEWAY_PORT" >"$TASK_HOME/claudecode-gateway.log" 2>&1 &
 
   for _ in $(seq 1 10); do
-    if openclaw_health; then
+    if claudecode_health; then
       return 0
     fi
     sleep 1
@@ -81,26 +81,26 @@ ensure_gateway() {
   return 1
 }
 
-if [ "$OPENCLAW_EXEC_MODE" = "gateway" ] && ! ensure_gateway; then
-  echo "warning: openclaw gateway not ready, command may fallback to embedded mode" >&2
+if [ "$CLAUDECODE_EXEC_MODE" = "gateway" ] && ! ensure_gateway; then
+  echo "warning: claudecode gateway not ready, command may fallback to embedded mode" >&2
 fi
 
-set -- openclaw agent --message "$CLOUDCLAW_INPUT" --json
-if [ "$OPENCLAW_EXEC_MODE" = "local" ]; then
+set -- claudecode agent --message "$CLOUDCLAW_INPUT" --json
+if [ "$CLAUDECODE_EXEC_MODE" = "local" ]; then
   set -- "$@" --local
 else
-  set -- "$@" --session-id "$OPENCLAW_SESSION_ID"
+  set -- "$@" --session-id "$CLAUDECODE_SESSION_ID"
 fi
-if [ -n "$OPENCLAW_AGENT_ID" ]; then
-  set -- "$@" --agent "$OPENCLAW_AGENT_ID"
+if [ -n "$CLAUDECODE_AGENT_ID" ]; then
+  set -- "$@" --agent "$CLAUDECODE_AGENT_ID"
 fi
-if [ -n "$OPENCLAW_TIMEOUT_SECONDS" ]; then
-  set -- "$@" --timeout "$OPENCLAW_TIMEOUT_SECONDS"
+if [ -n "$CLAUDECODE_TIMEOUT_SECONDS" ]; then
+  set -- "$@" --timeout "$CLAUDECODE_TIMEOUT_SECONDS"
 fi
 
-output_json="$TASK_HOME/openclaw-output.json"
-if ! OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" "$@" >"$output_json"; then
-  echo "openclaw agent command failed" >&2
+output_json="$TASK_HOME/claudecode-output.json"
+if ! CLAUDECODE_HOME="$CLAUDECODE_HOME" CLAUDECODE_CONFIG_PATH="$CLAUDECODE_CONFIG_PATH" "$@" >"$output_json"; then
+  echo "claudecode agent command failed" >&2
   exit 1
 fi
 
