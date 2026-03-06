@@ -1,63 +1,42 @@
 # cloudclaw
 
+## 快速开始（opencode）
+
 ```bash
 cd cloudclaw
 export AGENT_RUNTIME=opencode
+
+# 1) 生成默认配置（来自容器内 opencode，不依赖宿主安装 opencode）
+bash deploy/server/cloudclawctl.sh init
+
+# 2) 修改默认模型/Provider 等配置
+vim ./cloudclaw_data/opencode/config/opencode.json
+
+# 3) 启动
 bash deploy/server/cloudclawctl.sh up
 ```
 
-## Common Commands
+## 配置位置
+
+- 公共共享配置（所有 opencode 容器共用）：
+  - `./cloudclaw_data/opencode/config/opencode.json`
+- 用户私有运行时数据：
+  - `./cloudclaw_data/user-runtime/<user_id>/...`
+
+## 常用命令
 
 ```bash
-# status / logs
 bash deploy/server/cloudclawctl.sh status
 bash deploy/server/cloudclawctl.sh runner logs 200
-
-# smoke
 bash deploy/server/cloudclawctl.sh smoke
 
-# dequeue finished task results for downstream consumer
-bash deploy/server/cloudclawctl.sh result dequeue 20
-
-# inspect one task lifecycle/result (non-destructive)
+# 任务追踪（容器分配 + 事件 + 结果）
 bash deploy/server/cloudclawctl.sh task trace <task_id>
 bash deploy/server/cloudclawctl.sh result get <task_id>
 
-# simulate concurrent submit + independent result-poll worker
-go run ./cmd/tasksim \
-  --data-dir ./cloudclaw_data/data \
-  --db-driver sqlite \
-  --users sim_u1,sim_u2,sim_u3 \
-  --tasks-per-user 5 \
-  --submit-workers 4 \
-  --poll-interval 1s \
-  --dequeue-limit 20
+# 下游消费结果队列
+bash deploy/server/cloudclawctl.sh result dequeue 20
 
-# stop
+# 停止
 bash deploy/server/cloudclawctl.sh down
 ```
-
-## Config
-
-```bash
-# show config path/content
-bash deploy/server/cloudclawctl.sh config path
-bash deploy/server/cloudclawctl.sh config show
-
-# import config
-bash deploy/server/cloudclawctl.sh config import /abs/path/opencode.json
-
-# generate config from runtime image defaults (no host opencode needed)
-bash deploy/server/cloudclawctl.sh config init-full
-```
-
-Notes:
-- `AGENT_RUNTIME` required: `opencode | claudecode`
-- `result dequeue` now includes `container_id`; `output` is always present (may be empty string)
-- `opencode` shared config path is fixed: `./cloudclaw_data/opencode/config/opencode.json` (or `<CC_HOME>/opencode/config/opencode.json`)
-- `opencode` per-user private runtime state is stored on host at `./cloudclaw_data/user-runtime/<user_id>/opencode-home`
-- `opencode` `OPENCODE_PERSIST_MODE=auto` by default: if private runtime path is mounted, keep full runtime state there; fallback to minimal pruning only when using in-workspace home
-- `opencode` runner defaults to `--workspace-state-mode=ephemeral` (no per-user workspace DB restore/persist)
-- `claudecode` can bootstrap config with `AGENT_RUNTIME=claudecode bash deploy/server/cloudclawctl.sh config init-full`
-- opencode shared (all containers): `./cloudclaw_data/opencode/config/*` (mounted read-only to `/workspace/.config/opencode`)
-- clean historical opencode runtime rows in DB: `bash deploy/server/cloudclawctl.sh db prune-opencode-runtime`
