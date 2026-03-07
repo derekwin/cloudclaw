@@ -431,6 +431,98 @@ func (s *Store) QueueLength() (int, error) {
 	return n, nil
 }
 
+func (s *Store) TaskStatusCounts() (map[model.TaskStatus]int, error) {
+	out := map[model.TaskStatus]int{
+		model.StatusQueued:   0,
+		model.StatusRunning:  0,
+		model.StatusSuccess:  0,
+		model.StatusFailed:   0,
+		model.StatusCanceled: 0,
+	}
+	rows, err := s.db.Query("SELECT status, COUNT(1) FROM tasks GROUP BY status")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		key := model.TaskStatus(status)
+		if _, ok := out[key]; ok {
+			out[key] = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) ListTasksByStatus(status model.TaskStatus, limit int) ([]model.Task, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	orderClause := "ORDER BY updated_at DESC, created_at DESC"
+	switch status {
+	case model.StatusQueued:
+		orderClause = "ORDER BY priority ASC, enqueued_at ASC, created_at ASC"
+	case model.StatusRunning:
+		orderClause = "ORDER BY started_at ASC, updated_at ASC"
+	case model.StatusSuccess, model.StatusFailed, model.StatusCanceled:
+		orderClause = "ORDER BY finished_at DESC, updated_at DESC, created_at DESC"
+	}
+
+	query := "SELECT " + s.selectTaskColumnsSQL() + " FROM tasks WHERE status=" + s.ph(1) + " " + orderClause + " LIMIT " + s.ph(2)
+	rows, err := s.db.Query(query, string(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]model.Task, 0, limit)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) ListLatestFinishedTasks(limit int) ([]model.Task, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	query := "SELECT " + s.selectTaskColumnsSQL() + " FROM tasks WHERE status IN (" + s.ph(1) + ", " + s.ph(2) + ", " + s.ph(3) + ") ORDER BY finished_at DESC, updated_at DESC, created_at DESC LIMIT " + s.ph(4)
+	rows, err := s.db.Query(query, string(model.StatusSuccess), string(model.StatusFailed), string(model.StatusCanceled), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]model.Task, 0, limit)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (s *Store) CancelTask(taskID string) (model.Task, error) {
 	taskID, err := trimRequired(taskID, "task id")
 	if err != nil {
@@ -1462,11 +1554,14 @@ func (s *Store) ph(i int) string {
 	return s.dialect.placeholder(i)
 }
 
-func (s *Store) selectTaskByIDSQL() string {
-	return `SELECT id, user_id, task_type, input, priority, status, attempts, max_retries, container_id,
+func (s *Store) selectTaskColumnsSQL() string {
+	return `id, user_id, task_type, input, priority, status, attempts, max_retries, container_id,
 lease_until, error_message, cancel_requested, created_at, enqueued_at, updated_at, started_at,
-finished_at, last_heartbeat_at, usage_prompt_tokens, usage_completion_tokens, usage_total_tokens
-FROM tasks WHERE id = ` + s.ph(1)
+finished_at, last_heartbeat_at, usage_prompt_tokens, usage_completion_tokens, usage_total_tokens`
+}
+
+func (s *Store) selectTaskByIDSQL() string {
+	return `SELECT ` + s.selectTaskColumnsSQL() + ` FROM tasks WHERE id = ` + s.ph(1)
 }
 
 func (s *Store) updateTaskStatusSQL() string {

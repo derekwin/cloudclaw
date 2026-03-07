@@ -46,11 +46,13 @@ bash deploy/server/cloudclawctl.sh up
 export AGENT_RUNTIME=opencode
 
 bash deploy/server/cloudclawctl.sh status
+bash deploy/server/cloudclawctl.sh status watch 2
 bash deploy/server/cloudclawctl.sh runner logs 200
 bash deploy/server/cloudclawctl.sh smoke
 
 # 任务追踪（容器分配 + 事件 + 结果）
 bash deploy/server/cloudclawctl.sh task trace <task_id>
+bash deploy/server/cloudclawctl.sh task summary 10
 bash deploy/server/cloudclawctl.sh result get <task_id>
 
 # 下游消费结果队列
@@ -101,3 +103,16 @@ bash deploy/server/cloudclawctl.sh result get <task_id>
 - 运行模式默认（opencode + claudecode）：
   - `WORKSPACE_STATE_MODE=ephemeral`
   - `WORKSPACE_MODE=mount`
+
+## 批量任务测试
+
+```
+go run ./cmd/tasksim \
+  --data-dir ./cloudclaw_data/data \
+  --db-driver sqlite \
+  --users sim_u1,sim_u2,sim_u3 \
+  --tasks-per-user 5 \
+  --submit-workers 4 \
+  --poll-interval 1s \
+  --dequeue-limit 20
+```

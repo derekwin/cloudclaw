@@ -584,6 +584,86 @@ func TestDequeueTaskResultsRetryDoesNotEmitTerminalResult(t *testing.T) {
 	}
 }
 
+func TestTaskSummaryQueries(t *testing.T) {
+	s := newTestStore(t)
+
+	submit := func(user string) model.Task {
+		tk, err := s.SubmitTask(SubmitTaskInput{
+			UserID:     user,
+			TaskType:   "summary",
+			Input:      "x",
+			MaxRetries: 0,
+		})
+		if err != nil {
+			t.Fatalf("submit %s: %v", user, err)
+		}
+		return tk
+	}
+
+	_ = submit("u1")
+	_ = submit("u2")
+	_ = submit("u3")
+	t4 := submit("u4")
+	t5 := submit("u5")
+
+	run, err := s.DequeueForRun("container-1", 30*time.Second)
+	if err != nil || run == nil {
+		t.Fatalf("dequeue running task: %v, task=%+v", err, run)
+	}
+	picked2, err := s.DequeueForRun("container-2", 30*time.Second)
+	if err != nil || picked2 == nil {
+		t.Fatalf("dequeue success task: %v, task=%+v", err, picked2)
+	}
+	if err := s.MarkTaskSucceeded(picked2.ID, "container-2", model.TokenUsage{}, "ok"); err != nil {
+		t.Fatalf("mark success: %v", err)
+	}
+	picked3, err := s.DequeueForRun("container-3", 30*time.Second)
+	if err != nil || picked3 == nil {
+		t.Fatalf("dequeue fail task: %v, task=%+v", err, picked3)
+	}
+	if err := s.MarkTaskRetryOrFail(picked3.ID, "container-3", "boom"); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if _, err := s.CancelTask(t4.ID); err != nil {
+		t.Fatalf("cancel task: %v", err)
+	}
+
+	counts, err := s.TaskStatusCounts()
+	if err != nil {
+		t.Fatalf("task status counts: %v", err)
+	}
+	if counts[model.StatusRunning] != 1 || counts[model.StatusQueued] != 1 || counts[model.StatusSuccess] != 1 || counts[model.StatusFailed] != 1 || counts[model.StatusCanceled] != 1 {
+		t.Fatalf("unexpected counts: %+v", counts)
+	}
+
+	running, err := s.ListTasksByStatus(model.StatusRunning, 10)
+	if err != nil {
+		t.Fatalf("list running: %v", err)
+	}
+	if len(running) != 1 || running[0].ID != run.ID {
+		t.Fatalf("unexpected running tasks: %+v", running)
+	}
+
+	queued, err := s.ListTasksByStatus(model.StatusQueued, 10)
+	if err != nil {
+		t.Fatalf("list queued: %v", err)
+	}
+	if len(queued) != 1 {
+		t.Fatalf("unexpected queued tasks: %+v", queued)
+	}
+	if queued[0].ID != t5.ID {
+		t.Fatalf("expected queued task %s, got %+v", t5.ID, queued[0])
+	}
+
+	done, err := s.ListLatestFinishedTasks(3)
+	if err != nil {
+		t.Fatalf("list latest finished: %v", err)
+	}
+	if len(done) != 3 {
+		t.Fatalf("expected 3 finished tasks, got %d (%+v)", len(done), done)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	d := t.TempDir()
