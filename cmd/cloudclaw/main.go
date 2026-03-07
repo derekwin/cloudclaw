@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"cloudclaw/internal/dockerutil"
 	"cloudclaw/internal/engine"
 	"cloudclaw/internal/k8sutil"
+	"cloudclaw/internal/model"
 	"cloudclaw/internal/store"
 	"cloudclaw/internal/workspace"
 	"cloudclaw/pkg/cloudclaw"
@@ -229,7 +231,7 @@ func runCmd(args []string) error {
 
 func taskCmd(args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: cloudclaw task <submit|status|cancel>")
+		return fmt.Errorf("usage: cloudclaw task <submit|status|cancel|summary>")
 	}
 	subcmd := args[0]
 	switch subcmd {
@@ -239,6 +241,8 @@ func taskCmd(args []string) error {
 		return taskStatusCmd(args[1:])
 	case "cancel":
 		return taskCancelCmd(args[1:])
+	case "summary":
+		return taskSummaryCmd(args[1:])
 	default:
 		return fmt.Errorf("unknown task command: %s", subcmd)
 	}
@@ -303,6 +307,136 @@ func taskCancelCmd(args []string) error {
 			return err
 		}
 		return printJSON(task)
+	})
+}
+
+type taskSummaryTask struct {
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id"`
+	TaskType    string     `json:"task_type"`
+	Status      string     `json:"status"`
+	Priority    int        `json:"priority"`
+	Attempts    int        `json:"attempts"`
+	ContainerID string     `json:"container_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+}
+
+type taskSummaryContainer struct {
+	ID        string           `json:"id"`
+	State     string           `json:"state"`
+	TaskID    string           `json:"task_id,omitempty"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	Task      *taskSummaryTask `json:"task,omitempty"`
+}
+
+type taskSummaryResponse struct {
+	GeneratedAt time.Time              `json:"generated_at"`
+	QueueLength int                    `json:"queue_length"`
+	Counts      map[string]int         `json:"counts"`
+	Running     []taskSummaryTask      `json:"running"`
+	Queued      []taskSummaryTask      `json:"queued"`
+	RecentDone  []taskSummaryTask      `json:"recent_done"`
+	Containers  []taskSummaryContainer `json:"containers"`
+}
+
+func taskSummaryCmd(args []string) error {
+	fs := flag.NewFlagSet("task summary", flag.ContinueOnError)
+	sf := bindCommonStoreFlags(fs)
+	limit := fs.Int("limit", 10, "limit per task list section")
+	format := fs.String("format", "json", "output format: json|text")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *limit <= 0 {
+		return fmt.Errorf("limit must be > 0")
+	}
+	outFmt := strings.ToLower(strings.TrimSpace(*format))
+	if outFmt != "json" && outFmt != "text" {
+		return fmt.Errorf("unsupported format: %s (use json|text)", *format)
+	}
+
+	return withStore(sf, func(s *store.Store) error {
+		queueLen, err := s.QueueLength()
+		if err != nil {
+			return err
+		}
+		counts, err := s.TaskStatusCounts()
+		if err != nil {
+			return err
+		}
+		running, err := s.ListTasksByStatus(model.StatusRunning, *limit)
+		if err != nil {
+			return err
+		}
+		queued, err := s.ListTasksByStatus(model.StatusQueued, *limit)
+		if err != nil {
+			return err
+		}
+		done, err := s.ListLatestFinishedTasks(*limit)
+		if err != nil {
+			return err
+		}
+		containers, err := s.ListContainers()
+		if err != nil {
+			return err
+		}
+
+		resp := taskSummaryResponse{
+			GeneratedAt: time.Now().UTC(),
+			QueueLength: queueLen,
+			Counts: map[string]int{
+				string(model.StatusQueued):   counts[model.StatusQueued],
+				string(model.StatusRunning):  counts[model.StatusRunning],
+				string(model.StatusSuccess):  counts[model.StatusSuccess],
+				string(model.StatusFailed):   counts[model.StatusFailed],
+				string(model.StatusCanceled): counts[model.StatusCanceled],
+			},
+			Running:    toSummaryTasks(running),
+			Queued:     toSummaryTasks(queued),
+			RecentDone: toSummaryTasks(done),
+			Containers: make([]taskSummaryContainer, 0, len(containers)),
+		}
+		resp.Counts["TOTAL"] = resp.Counts[string(model.StatusQueued)] +
+			resp.Counts[string(model.StatusRunning)] +
+			resp.Counts[string(model.StatusSuccess)] +
+			resp.Counts[string(model.StatusFailed)] +
+			resp.Counts[string(model.StatusCanceled)]
+
+		taskIndex := map[string]taskSummaryTask{}
+		for _, group := range [][]taskSummaryTask{resp.Running, resp.Queued, resp.RecentDone} {
+			for _, t := range group {
+				taskIndex[t.ID] = t
+			}
+		}
+
+		sort.Slice(containers, func(i, j int) bool { return containers[i].ID < containers[j].ID })
+		for _, c := range containers {
+			item := taskSummaryContainer{
+				ID:        c.ID,
+				State:     c.State,
+				TaskID:    c.TaskID,
+				UpdatedAt: c.UpdatedAt,
+			}
+			if strings.TrimSpace(c.TaskID) != "" {
+				if t, ok := taskIndex[c.TaskID]; ok {
+					tc := t
+					item.Task = &tc
+				} else if t, err := s.GetTask(c.TaskID); err == nil {
+					tc := toSummaryTask(t)
+					item.Task = &tc
+				}
+			}
+			resp.Containers = append(resp.Containers, item)
+		}
+
+		if outFmt == "text" {
+			printTaskSummaryText(resp)
+			return nil
+		}
+		return printJSON(resp)
 	})
 }
 
@@ -442,6 +576,7 @@ func usage() {
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
+	  cloudclaw task summary [--limit 10 --format json|text]
 	  cloudclaw result dequeue [--limit 20]
 	  cloudclaw result get --task-id tsk_xxx
 	  cloudclaw user-data prune-opencode-runtime
@@ -528,6 +663,82 @@ func runtimeNameForExecutor(executorMode string) string {
 		return "claudecode"
 	}
 	return "opencode"
+}
+
+func toSummaryTasks(tasks []model.Task) []taskSummaryTask {
+	out := make([]taskSummaryTask, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, toSummaryTask(t))
+	}
+	return out
+}
+
+func toSummaryTask(t model.Task) taskSummaryTask {
+	return taskSummaryTask{
+		ID:          t.ID,
+		UserID:      t.UserID,
+		TaskType:    t.TaskType,
+		Status:      string(t.Status),
+		Priority:    t.Priority,
+		Attempts:    t.Attempts,
+		ContainerID: t.ContainerID,
+		CreatedAt:   t.CreatedAt,
+		UpdatedAt:   t.UpdatedAt,
+		StartedAt:   t.StartedAt,
+		FinishedAt:  t.FinishedAt,
+	}
+}
+
+func printTaskSummaryText(summary taskSummaryResponse) {
+	fmt.Printf("generated_at: %s\n", summary.GeneratedAt.Format(time.RFC3339))
+	fmt.Printf("queue_length: %d\n", summary.QueueLength)
+	fmt.Printf("counts: queued=%d running=%d succeeded=%d failed=%d canceled=%d total=%d\n",
+		summary.Counts[string(model.StatusQueued)],
+		summary.Counts[string(model.StatusRunning)],
+		summary.Counts[string(model.StatusSuccess)],
+		summary.Counts[string(model.StatusFailed)],
+		summary.Counts[string(model.StatusCanceled)],
+		summary.Counts["TOTAL"],
+	)
+
+	fmt.Println("running:")
+	printSummaryTaskList(summary.Running)
+	fmt.Println("queued:")
+	printSummaryTaskList(summary.Queued)
+	fmt.Println("recent_done:")
+	printSummaryTaskList(summary.RecentDone)
+	fmt.Println("containers:")
+	if len(summary.Containers) == 0 {
+		fmt.Println("  - (none)")
+		return
+	}
+	for _, c := range summary.Containers {
+		line := fmt.Sprintf("  - id=%s state=%s updated_at=%s", c.ID, c.State, c.UpdatedAt.Format(time.RFC3339))
+		if strings.TrimSpace(c.TaskID) != "" {
+			line += " task_id=" + c.TaskID
+		}
+		if c.Task != nil {
+			line += fmt.Sprintf(" user=%s task_type=%s task_status=%s", c.Task.UserID, c.Task.TaskType, c.Task.Status)
+		}
+		fmt.Println(line)
+	}
+}
+
+func printSummaryTaskList(tasks []taskSummaryTask) {
+	if len(tasks) == 0 {
+		fmt.Println("  - (none)")
+		return
+	}
+	for _, t := range tasks {
+		line := fmt.Sprintf(
+			"  - id=%s user=%s type=%s status=%s attempts=%d priority=%d updated_at=%s",
+			t.ID, t.UserID, t.TaskType, t.Status, t.Attempts, t.Priority, t.UpdatedAt.Format(time.RFC3339),
+		)
+		if strings.TrimSpace(t.ContainerID) != "" {
+			line += " container=" + t.ContainerID
+		}
+		fmt.Println(line)
+	}
 }
 
 func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix *string) {

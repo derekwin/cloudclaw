@@ -805,6 +805,7 @@ runner_logs() {
 
 status_all() {
   load_runtime_profile
+  ensure_dirs
   log "cloudclaw status"
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     echo "  runner: running (pid=$(cat "$PID_FILE"))"
@@ -820,6 +821,37 @@ status_all() {
   else
     echo "  config: $RUNTIME_CONFIG_FILE"
   fi
+
+  echo "  task_summary:"
+  if [ ! -x "$CLOUDCLAW_BIN" ]; then
+    echo "    unavailable (cloudclaw binary not found)"
+    return
+  fi
+  summary_cmd=(
+    "$CLOUDCLAW_BIN" task summary
+    --data-dir "$DATA_DIR"
+    --db-driver "$DB_DRIVER"
+    --limit "${STATUS_TASK_LIMIT:-8}"
+    --format text
+  )
+  if [ -n "$DB_DSN" ]; then
+    summary_cmd+=(--db-dsn "$DB_DSN")
+  fi
+  if summary_out="$("${summary_cmd[@]}" 2>&1)"; then
+    printf '%s\n' "$summary_out" | sed 's/^/    /'
+  else
+    echo "    unavailable: $summary_out"
+  fi
+}
+
+status_watch() {
+  local interval="${1:-2}"
+  while :; do
+    clear
+    printf '[cloudclawctl] status watch %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    status_all
+    sleep "$interval"
+  done
 }
 
 smoke() {
@@ -866,7 +898,7 @@ Usage:
 Groups:
   home   set <path> | show
   config path | show | edit | import <file> | reset | init-full | help
-  task   status <task_id> | events <task_id> | trace <task_id>
+  task   status <task_id> | events <task_id> | trace <task_id> | summary [limit]
   result dequeue [limit]
          get <task_id>
   db     prune-opencode-runtime
@@ -879,7 +911,8 @@ Shortcuts:
   up          install + init(if missing) + pool start + runner start
   down        runner stop + pool stop
   restart     down + up
-  status      Show runner + pool + config status
+  status      Show runner + pool + config + task summary
+  status watch [interval]  Dynamic status refresh (default interval: 2s)
   smoke       Submit one smoke task and wait result
   help        Show this help
 
@@ -999,6 +1032,7 @@ cmd_db() {
 cmd_task() {
   local action="${1:-}"
   local task_id="${2:-}"
+  local limit="${2:-8}"
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
     die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
@@ -1041,8 +1075,21 @@ cmd_task() {
       echo "# task result"
       cmd_result get "$task_id"
       ;;
+    summary)
+      cmd=(
+        "$CLOUDCLAW_BIN" task summary
+        --data-dir "$DATA_DIR"
+        --db-driver "$DB_DRIVER"
+        --limit "$limit"
+        --format text
+      )
+      if [ -n "$DB_DSN" ]; then
+        cmd+=(--db-dsn "$DB_DSN")
+      fi
+      "${cmd[@]}"
+      ;;
     *)
-      die "unknown task action: $action (use: status <task_id>|events <task_id>|trace <task_id>)"
+      die "unknown task action: $action (use: status <task_id>|events <task_id>|trace <task_id>|summary [limit])"
       ;;
   esac
 }
@@ -1109,6 +1156,7 @@ cmd_runner() {
 cmd_shortcut() {
   local action="${1:-help}"
   local arg1="${2:-}"
+  local arg2="${3:-}"
   case "$action" in
     init) init_full_config ;;
     install) install_all ;;
@@ -1129,7 +1177,13 @@ cmd_shortcut() {
       start_pool
       start_cloudclaw
       ;;
-    status) status_all ;;
+    status)
+      if [ "$arg1" = "watch" ]; then
+        status_watch "${arg2:-2}"
+      else
+        status_all
+      fi
+      ;;
     smoke) smoke ;;
     task-status) cmd_task status "$arg1" ;;
     task-events) cmd_task events "$arg1" ;;
