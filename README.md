@@ -5,6 +5,7 @@
 ```bash
 cd cloudclaw
 export AGENT_RUNTIME=opencode
+export CONTAINER_NETWORK=host # 如果使用宿主本地ollama
 
 # 1) 初始化共享配置目录（优先从宿主 ~/.config/opencode 复制；
 #    如果宿主没有，则在宿主安装 opencode）

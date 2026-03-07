@@ -94,6 +94,7 @@ export WORKSPACE_STATE_MODE=ephemeral
 export WORKSPACE_MODE=mount
 export CONTAINER_HARDEN=1
 export CONTAINER_PIDS_LIMIT=256
+export CONTAINER_NETWORK=host
 
 bash deploy/server/cloudclawctl.sh init
 bash deploy/server/cloudclawctl.sh up
