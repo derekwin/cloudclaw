@@ -24,6 +24,28 @@ func TestApplyExecutorRuntimeDefaultsForClaudecode(t *testing.T) {
 	}
 }
 
+func TestApplyExecutorRuntimeDefaultsForOpenclaw(t *testing.T) {
+	k8sLabel := defaultK8sLabelSelector
+	dockerLabel := defaultDockerLabelSelector
+	dockerImage := defaultDockerImage
+	dockerNamePrefix := defaultDockerNamePrefix
+
+	applyExecutorRuntimeDefaults("docker-openclaw", &k8sLabel, &dockerLabel, &dockerImage, &dockerNamePrefix)
+
+	if k8sLabel != "app=openclaw-agent" {
+		t.Fatalf("unexpected k8s label: %s", k8sLabel)
+	}
+	if dockerLabel != "app=openclaw-agent" {
+		t.Fatalf("unexpected docker label: %s", dockerLabel)
+	}
+	if dockerImage != "ghcr.io/anomalyco/openclaw:latest" {
+		t.Fatalf("unexpected docker image: %s", dockerImage)
+	}
+	if dockerNamePrefix != "openclaw-agent" {
+		t.Fatalf("unexpected docker name prefix: %s", dockerNamePrefix)
+	}
+}
+
 func TestApplyExecutorRuntimeDefaultsKeepsCustomValues(t *testing.T) {
 	k8sLabel := "app=custom-k8s"
 	dockerLabel := "app=custom-docker"
@@ -71,6 +93,9 @@ func TestApplyExecutorRuntimeDefaultsForOpencodeNoChange(t *testing.T) {
 func TestRuntimeNameForExecutor(t *testing.T) {
 	if got := runtimeNameForExecutor("docker-opencode"); got != "opencode" {
 		t.Fatalf("unexpected runtime for docker-opencode: %s", got)
+	}
+	if got := runtimeNameForExecutor("docker-openclaw"); got != "openclaw" {
+		t.Fatalf("unexpected runtime for docker-openclaw: %s", got)
 	}
 	if got := runtimeNameForExecutor("k8s-claudecode"); got != "claudecode" {
 		t.Fatalf("unexpected runtime for k8s-claudecode: %s", got)

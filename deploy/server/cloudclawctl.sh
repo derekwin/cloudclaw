@@ -51,15 +51,18 @@ DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
 DB_DRIVER="${DB_DRIVER:-sqlite}"
 DB_DSN="${DB_DSN:-}"
+RETRY_PRIORITY="${RETRY_PRIORITY:-0}"
 CONTAINER_HARDEN="${CONTAINER_HARDEN:-1}"
 CONTAINER_PIDS_LIMIT="${CONTAINER_PIDS_LIMIT:-512}"
 CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-}"
 AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 OPENCODE_HOST_CONFIG_DIR="${OPENCODE_HOST_CONFIG_DIR:-$HOME/.config/opencode}"
+OPENCLAW_HOST_CONFIG_DIR="${OPENCLAW_HOST_CONFIG_DIR:-$HOME/.config/openclaw}"
 CLAUDECODE_HOST_CONFIG_DIR="${CLAUDECODE_HOST_CONFIG_DIR:-$HOME/.claudecode}"
 CLAUDECODE_OFFICIAL_CONFIG_DIR="${CLAUDECODE_OFFICIAL_CONFIG_DIR:-$HOME/.claude}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
+OPENCLAW_CONFIG_MOUNT_PATH="${OPENCLAW_CONFIG_MOUNT_PATH:-/workspace/.config/openclaw}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 WORKSPACE_MOUNT_PATH="${WORKSPACE_MOUNT_PATH:-/workspace/cloudclaw/runs}"
 OWNER_UID="${AGENT_OWNER_UID:-${OPENCODE_OWNER_UID:-${SUDO_UID:-$(id -u)}}}"
@@ -71,6 +74,7 @@ SHARED_DIR="$CC_HOME/shared"
 SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
 SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
 SHARED_OPENCODE_DIR="$SHARED_DIR/opencode"
+SHARED_OPENCLAW_DIR="$SHARED_DIR/openclaw"
 LEGACY_OPENCODE_CONFIG_DIR="$CC_HOME/opencode/config"
 DATA_DIR="$CC_HOME/data"
 USER_RUNTIME_DIR="$CC_HOME/user-runtime"
@@ -110,7 +114,7 @@ require_arg() {
 
 require_runtime() {
   if [ -z "$AGENT_RUNTIME" ]; then
-    die "AGENT_RUNTIME is required (opencode|claudecode)"
+    die "AGENT_RUNTIME is required (opencode|openclaw|claudecode)"
   fi
 }
 
@@ -137,6 +141,20 @@ load_runtime_profile() {
       RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/opencode-runner:latest}"
       DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_opencode_task.sh}"
       ;;
+    openclaw)
+      RUNTIME_NAME="openclaw"
+      RUNTIME_EXECUTOR="docker-openclaw"
+      RUNTIME_CONFIG_DIR="$SHARED_OPENCLAW_DIR"
+      RUNTIME_CONFIG_FILE="$SHARED_OPENCLAW_DIR/openclaw.json"
+      RUNTIME_CONFIG_MOUNT_PATH="$OPENCLAW_CONFIG_MOUNT_PATH"
+      RUNTIME_CONFIG_BASENAME="$(basename "$RUNTIME_CONFIG_FILE")"
+      DEFAULT_BASE_IMAGE="ghcr.io/anomalyco/openclaw:latest"
+      POOL_LABEL="${POOL_LABEL:-app=openclaw-agent}"
+      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-openclaw-agent}"
+      BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
+      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/openclaw-runner:latest}"
+      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_openclaw_task.sh}"
+      ;;
     claudecode)
       RUNTIME_NAME="claudecode"
       RUNTIME_EXECUTOR="docker-claudecode"
@@ -152,7 +170,7 @@ load_runtime_profile() {
       DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_claudecode_task.sh}"
       ;;
     *)
-      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: opencode|claudecode)"
+      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: opencode|openclaw|claudecode)"
       ;;
   esac
   AGENT_RUNTIME="$runtime"
@@ -210,7 +228,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$SHARED_OPENCLAW_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
   if [ -d "$LEGACY_OPENCODE_CONFIG_DIR" ] && [ -n "$(ls -A "$LEGACY_OPENCODE_CONFIG_DIR" 2>/dev/null)" ] && [ -z "$(ls -A "$SHARED_OPENCODE_DIR" 2>/dev/null)" ]; then
     cp -R "$LEGACY_OPENCODE_CONFIG_DIR/." "$SHARED_OPENCODE_DIR/" || true
     log "migrated legacy opencode shared config: $LEGACY_OPENCODE_CONFIG_DIR -> $SHARED_OPENCODE_DIR"
@@ -269,6 +287,57 @@ bootstrap_host_opencode_config_if_missing() {
 
   if [ ! -d "$OPENCODE_HOST_CONFIG_DIR" ] || [ -z "$(ls -A "$OPENCODE_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
     die "host opencode config is still empty: $OPENCODE_HOST_CONFIG_DIR (run opencode once manually, then retry init)"
+  fi
+}
+
+resolve_host_openclaw_bin() {
+  if command -v openclaw >/dev/null 2>&1; then
+    command -v openclaw
+    return 0
+  fi
+  for candidate in "$HOME/.local/bin/openclaw" "$HOME/bin/openclaw"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_host_openclaw_installed() {
+  local openclaw_bin
+  if openclaw_bin="$(resolve_host_openclaw_bin)"; then
+    log "host openclaw already installed: $openclaw_bin"
+    return 0
+  fi
+
+  need_cmd curl
+  need_cmd bash
+  log "host openclaw not found, installing: curl -fsSL https://openclaw.ai/install.sh | bash -s -- --install-method git"
+  if ! /bin/sh -c 'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --install-method git'; then
+    die "failed to install openclaw on host"
+  fi
+  if ! openclaw_bin="$(resolve_host_openclaw_bin)"; then
+    die "openclaw installed but executable not found (tried PATH and ~/.local/bin/openclaw)"
+  fi
+  log "host openclaw installed: $openclaw_bin"
+}
+
+bootstrap_host_openclaw_config_if_missing() {
+  local openclaw_bin
+  if [ -d "$OPENCLAW_HOST_CONFIG_DIR" ] && [ -n "$(ls -A "$OPENCLAW_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
+    return 0
+  fi
+
+  ensure_host_openclaw_installed
+  openclaw_bin="$(resolve_host_openclaw_bin)" || die "openclaw executable not found after installation"
+  mkdir -p "$OPENCLAW_HOST_CONFIG_DIR"
+
+  # Trigger CLI once so host side default dirs are created if supported by current version.
+  "$openclaw_bin" --help >/tmp/cloudclaw-openclaw-help.log 2>&1 || true
+
+  if [ ! -d "$OPENCLAW_HOST_CONFIG_DIR" ] || [ -z "$(ls -A "$OPENCLAW_HOST_CONFIG_DIR" 2>/dev/null)" ]; then
+    die "host openclaw config is still empty: $OPENCLAW_HOST_CONFIG_DIR (please configure openclaw on host first, then rerun: AGENT_RUNTIME=openclaw bash $0 config init-full)"
   fi
 }
 
@@ -337,14 +406,18 @@ bootstrap_host_claudecode_config_if_missing() {
   fi
 }
 
+is_directory_runtime() {
+  [ "$RUNTIME_NAME" = "opencode" ] || [ "$RUNTIME_NAME" = "openclaw" ]
+}
+
 ensure_runtime_config_ready() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
       return
     fi
-    die "missing opencode shared config dir: $RUNTIME_CONFIG_DIR (run: AGENT_RUNTIME=opencode bash $0 config init-full)"
+    die "missing $RUNTIME_NAME shared config dir: $RUNTIME_CONFIG_DIR (run: AGENT_RUNTIME=$RUNTIME_NAME bash $0 config init-full)"
   fi
   if [ ! -s "$RUNTIME_CONFIG_FILE" ]; then
     die "missing ${RUNTIME_NAME} config: $RUNTIME_CONFIG_FILE (run: AGENT_RUNTIME=$RUNTIME_NAME bash $0 config init-full)"
@@ -354,11 +427,11 @@ ensure_runtime_config_ready() {
 ensure_runtime_config_for_up() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
       return
     fi
-    log "opencode shared config not found, bootstrapping (same as: AGENT_RUNTIME=opencode $0 init)"
+    log "$RUNTIME_NAME shared config not found, bootstrapping (same as: AGENT_RUNTIME=$RUNTIME_NAME $0 init)"
     init_full_config
     return
   fi
@@ -378,7 +451,7 @@ show_config_path() {
 show_config() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     if [ -f "$RUNTIME_CONFIG_FILE" ]; then
       cat "$RUNTIME_CONFIG_FILE"
       return
@@ -412,7 +485,7 @@ import_config() {
 
 reset_config() {
   load_runtime_profile
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     rm -rf "$RUNTIME_CONFIG_DIR"
   fi
   init_full_config
@@ -422,9 +495,9 @@ reset_config() {
 edit_config() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     if [ ! -d "$RUNTIME_CONFIG_DIR" ] || [ -z "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
-      log "opencode shared config dir is empty, initializing first"
+      log "$RUNTIME_NAME shared config dir is empty, initializing first"
       init_full_config
     fi
     editor="${EDITOR:-vi}"
@@ -464,6 +537,25 @@ mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,theme
 log "initialized opencode config: $RUNTIME_CONFIG_FILE"
 }
 
+init_openclaw_config_full() {
+  ensure_dirs
+  mkdir -p "$RUNTIME_CONFIG_DIR"
+
+  if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+    log "openclaw shared config already exists, skip bootstrap: $RUNTIME_CONFIG_DIR"
+    return
+  fi
+
+  bootstrap_host_openclaw_config_if_missing
+  cp -R "$OPENCLAW_HOST_CONFIG_DIR/." "$RUNTIME_CONFIG_DIR/" || true
+  if [ -z "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+    die "failed to copy host openclaw config: $OPENCLAW_HOST_CONFIG_DIR -> $RUNTIME_CONFIG_DIR"
+  fi
+
+  mkdir -p "$RUNTIME_CONFIG_DIR"/{agents,commands,modes,plugins,skills,tools,themes}
+  log "initialized openclaw config: $RUNTIME_CONFIG_FILE"
+}
+
 init_claudecode_config_full() {
   ensure_dirs
   mkdir -p "$RUNTIME_CONFIG_DIR"
@@ -484,6 +576,10 @@ init_full_config() {
   load_runtime_profile
   if [ "$RUNTIME_NAME" = "opencode" ]; then
     init_opencode_config_full
+    return
+  fi
+  if [ "$RUNTIME_NAME" = "openclaw" ]; then
+    init_openclaw_config_full
     return
   fi
   init_claudecode_config_full
@@ -512,6 +608,22 @@ Then run:
 EOF
     return
   fi
+  if [ "$RUNTIME_NAME" = "openclaw" ]; then
+    cat <<EOF
+openclaw config path:
+  $RUNTIME_CONFIG_DIR
+
+CloudClaw maintains this config under CC_HOME by default.
+
+Optional: initialize shared config from host ~/.config/openclaw.
+If it's empty, cloudclawctl installs openclaw on host (git method) and asks you to finish host-side config first.
+  AGENT_RUNTIME=openclaw bash $0 config init-full
+
+Then run:
+  AGENT_RUNTIME=openclaw bash $0 pool start
+EOF
+    return
+  fi
 
   cat <<EOF
 claudecode config path:
@@ -528,7 +640,7 @@ EOF
 print_runtime_config_paths() {
   load_runtime_profile
   ensure_dirs
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     cat <<EOF
 runtime:
   $RUNTIME_NAME
@@ -562,9 +674,10 @@ install_all() {
 
   log "preparing runner assets"
   cp "$SCRIPT_DIR/templates/run_opencode_task.sh" "$RUNNER_DIR/run_opencode_task.sh"
+  cp "$SCRIPT_DIR/templates/run_openclaw_task.sh" "$RUNNER_DIR/run_openclaw_task.sh"
   cp "$SCRIPT_DIR/templates/run_claudecode_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
   cp "$SCRIPT_DIR/templates/Dockerfile.runner" "$RUNNER_DIR/Dockerfile.runner"
-  chmod +x "$RUNNER_DIR/run_opencode_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
+  chmod +x "$RUNNER_DIR/run_opencode_task.sh" "$RUNNER_DIR/run_openclaw_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
 
   resolved_base_image="$(resolve_base_image)"
   log "using base image: $resolved_base_image"
@@ -603,6 +716,14 @@ start_pool() {
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
         "-e" "OPENCODE_PERSIST_MODE=${OPENCODE_PERSIST_MODE:-full}"
       )
+    elif [ "$RUNTIME_NAME" = "openclaw" ]; then
+      env_args+=(
+        "-e" "OPENCLAW_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
+        "-e" "OPENCLAW_PERSIST_MODE=${OPENCLAW_PERSIST_MODE:-full}"
+      )
+      if [ -n "${OPENCLAW_BIN:-}" ]; then
+        env_args+=("-e" "OPENCLAW_BIN=${OPENCLAW_BIN}")
+      fi
     else
       env_args+=(
         "-e" "CLAUDECODE_CONFIG_PATH=$(runtime_config_mount_file)"
@@ -740,6 +861,7 @@ start_cloudclaw() {
     --shared-skills-dir "$SHARED_DIR"
     --docker-task-cmd "$DOCKER_TASK_CMD"
     --user-runtime-dir "$USER_RUNTIME_DIR"
+    --retry-priority "$RETRY_PRIORITY"
   )
   if [ "$workspace_mode" = "mount" ]; then
     cmd+=(--workspace-mount-path "$WORKSPACE_MOUNT_PATH")
@@ -815,7 +937,7 @@ status_all() {
 
   status_pool
   echo "  runtime: $RUNTIME_NAME"
-  if [ "$RUNTIME_NAME" = "opencode" ]; then
+  if is_directory_runtime; then
     echo "  config_dir: $RUNTIME_CONFIG_DIR"
     echo "  config_file: $RUNTIME_CONFIG_FILE"
   else
@@ -926,37 +1048,45 @@ Legacy aliases (compatible):
 Examples:
   AGENT_RUNTIME=opencode $0 init
   AGENT_RUNTIME=opencode $0 up
+  AGENT_RUNTIME=openclaw $0 init
+  AGENT_RUNTIME=openclaw $0 up
   AGENT_RUNTIME=claudecode $0 init
   AGENT_RUNTIME=claudecode $0 up
   AGENT_RUNTIME=opencode $0 smoke
+  AGENT_RUNTIME=openclaw $0 smoke
   AGENT_RUNTIME=opencode $0 task trace tsk_xxx
 
 Environment overrides:
-  AGENT_RUNTIME (required: opencode|claudecode)
+  AGENT_RUNTIME (required: opencode|openclaw|claudecode)
   CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
   CC_HOME_FILE (default: $REPO_ROOT/cloudclaw_data-home, stores persisted CC_HOME)
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
-  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, claudecode=claudecode:latest)
+  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, openclaw=ghcr.io/anomalyco/openclaw:latest, claudecode=claudecode:latest)
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
   OPENCODE_HOST_CONFIG_DIR (default: ~/.config/opencode, source path for opencode init bootstrap)
+  OPENCLAW_HOST_CONFIG_DIR (default: ~/.config/openclaw, source path for openclaw init bootstrap)
   CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
   CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
   CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
   CONTAINER_NETWORK (optional docker network name, e.g. internal)
   AGENT_ENV_FILE (optional env file path for sensitive vars like API keys)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
+  OPENCLAW_CONFIG_MOUNT_PATH (default: /workspace/.config/openclaw)
   WORKSPACE_MOUNT_PATH (default: /workspace/cloudclaw/runs; container mount path for runDir mount mode)
   WORKSPACE_MODE (optional: mount|copy; default: mount)
+  RETRY_PRIORITY (optional: retry queue priority, default: 0)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
+  OPENCLAW_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
+  OPENCLAW_BIN (optional: runtime binary, defaults to auto-detect openclaw then opencode)
   WORKSPACE_STATE_MODE (optional: db|ephemeral; default: ephemeral)
   CLAUDECODE_HOST_CONFIG_DIR (default: ~/.claudecode, source path for claudecode init bootstrap)
   CLAUDECODE_OFFICIAL_CONFIG_DIR (default: ~/.claude, official Claude Code settings dir, imported as config.json)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
-  DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_claudecode_task.sh)
+  DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_openclaw_task.sh|run_claudecode_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
   CLAUDECODE_EXEC_MODE (default: gateway, runtime=claudecode only)
   CLAUDECODE_GATEWAY_TOKEN / CLAUDECODE_GATEWAY_BIND / CLAUDECODE_GATEWAY_PORT / CLAUDECODE_GATEWAY_MANAGE (optional)
@@ -964,7 +1094,9 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
-  opencode shared config dir is fixed at: <CC_HOME>/shared/opencode
+  opencode shared config dir: <CC_HOME>/shared/opencode
+  openclaw shared config dir: <CC_HOME>/shared/openclaw
+  openclaw init does NOT fallback to opencode config; host openclaw config must be prepared first.
   "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.
   cloudclaw task execution only reads mounted runtime config.

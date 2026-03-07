@@ -11,6 +11,9 @@ OPENCODE_MODEL_NAME="${OPENCODE_MODEL_NAME:-}"
 OPENCODE_AGENT_NAME="${OPENCODE_AGENT_NAME:-}"
 OPENCODE_ATTACH="${OPENCODE_ATTACH:-}"
 OPENCODE_RUN_FORMAT="${OPENCODE_RUN_FORMAT:-default}"
+OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+OPENCODE_STATE_SUBDIR="${OPENCODE_STATE_SUBDIR:-opencode}"
+OPENCODE_WORKSPACE_CONFIG_DIRNAME="${OPENCODE_WORKSPACE_CONFIG_DIRNAME:-.opencode}"
 OPENCODE_PERSIST_MODE="$(printf '%s' "${OPENCODE_PERSIST_MODE:-auto}" | tr '[:upper:]' '[:lower:]')"
 case "$OPENCODE_PERSIST_MODE" in
   auto|minimal|full) ;;
@@ -59,7 +62,7 @@ prune_persisted_opencode_state() {
   if [ "$OPENCODE_PERSIST_MODE" = "full" ]; then
     return
   fi
-  state_root="$XDG_DATA_HOME/opencode"
+  state_root="$XDG_DATA_HOME/$OPENCODE_STATE_SUBDIR"
   if [ ! -d "$state_root" ]; then
     return
   fi
@@ -91,12 +94,12 @@ fi
 
 # Only create a merged config directory when workspace has per-user `.opencode`.
 # This avoids per-task full-directory copies for the common shared-only path.
-if [ -d "$USER_WORKSPACE_DIR/.opencode" ]; then
+if [ -d "$USER_WORKSPACE_DIR/$OPENCODE_WORKSPACE_CONFIG_DIRNAME" ]; then
   MERGED_CONFIG_DIR="$(mktemp -d -p "$TMP_ROOT" opencode-config.XXXXXX)"
   if [ -d "$OPENCODE_SHARED_CONFIG_DIR" ]; then
     cp -R "$OPENCODE_SHARED_CONFIG_DIR/." "$MERGED_CONFIG_DIR/" || true
   fi
-  cp -R "$USER_WORKSPACE_DIR/.opencode/." "$MERGED_CONFIG_DIR/" || true
+  cp -R "$USER_WORKSPACE_DIR/$OPENCODE_WORKSPACE_CONFIG_DIRNAME/." "$MERGED_CONFIG_DIR/" || true
   export OPENCODE_CONFIG_DIR="$MERGED_CONFIG_DIR"
 else
   export OPENCODE_CONFIG_DIR="$OPENCODE_SHARED_CONFIG_DIR"
@@ -110,7 +113,12 @@ fi
 
 cd "$USER_WORKSPACE_DIR"
 
-set -- opencode run --format "$OPENCODE_RUN_FORMAT"
+if ! command -v "$OPENCODE_BIN" >/dev/null 2>&1; then
+  echo "runtime command not found: $OPENCODE_BIN" >&2
+  exit 1
+fi
+
+set -- "$OPENCODE_BIN" run --format "$OPENCODE_RUN_FORMAT"
 if [ -n "$OPENCODE_MODEL_NAME" ]; then
   set -- "$@" --model "$OPENCODE_MODEL_NAME"
 fi

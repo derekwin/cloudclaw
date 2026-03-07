@@ -32,6 +32,7 @@ type Config struct {
 	EventRetentionPerTask int
 	MaxUserDataBytes      int64
 	MaxUserDataFileBytes  int64
+	RetryQueuePriority    int
 }
 
 type Store struct {
@@ -44,6 +45,7 @@ type Store struct {
 	eventRetentionPerTask int
 	maxUserDataBytes      int64
 	maxUserDataFileBytes  int64
+	retryQueuePriority    int
 }
 
 var idSeq atomic.Uint64
@@ -99,6 +101,9 @@ func NewWithConfig(cfg Config) (*Store, error) {
 	if cfg.MaxUserDataFileBytes <= 0 {
 		cfg.MaxUserDataFileBytes = 32 << 20 // 32 MiB
 	}
+	if cfg.RetryQueuePriority < 0 {
+		return nil, fmt.Errorf("retry queue priority must be >= 0")
+	}
 
 	var d dialect
 	sqlDriverName := cfg.Driver
@@ -145,6 +150,7 @@ func NewWithConfig(cfg Config) (*Store, error) {
 		eventRetentionPerTask: cfg.EventRetentionPerTask,
 		maxUserDataBytes:      cfg.MaxUserDataBytes,
 		maxUserDataFileBytes:  cfg.MaxUserDataFileBytes,
+		retryQueuePriority:    cfg.RetryQueuePriority,
 	}
 	if err := s.ensureSchema(); err != nil {
 		_ = db.Close()
@@ -851,7 +857,7 @@ func (s *Store) MarkTaskRetryOrFail(taskID, containerID, reason string) error {
 		res, err := tx.Exec(
 			s.markRetrySQL(),
 			string(model.StatusQueued),
-			0,
+			s.retryQueuePriority,
 			now,
 			reason,
 			now,
@@ -967,7 +973,7 @@ func (s *Store) RecoverExpiredLeases() (int, error) {
 	}
 
 	for _, id := range taskIDs {
-		if _, err := tx.Exec(s.requeueExpiredSQL(), string(model.StatusQueued), 0, now, "lease expired, requeued", now, s.dialect.boolValue(false), id); err != nil {
+		if _, err := tx.Exec(s.requeueExpiredSQL(), string(model.StatusQueued), s.retryQueuePriority, now, "lease expired, requeued", now, s.dialect.boolValue(false), id); err != nil {
 			return 0, err
 		}
 		if err := s.insertEventTx(tx, model.TaskEvent{
