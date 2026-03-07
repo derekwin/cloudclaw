@@ -27,6 +27,9 @@ bash deploy/server/cloudclawctl.sh up
 - 公共共享配置（所有 claudecode 容器共用）：
   - `./cloudclaw_data/shared/claudecode/config.json`
   - 容器内默认挂载到 `/workspace/.claudecode/config.json`
+  - `init` 优先从宿主 `~/.claudecode/config.json` 复制；
+  - 若宿主没有，则尝试读取宿主 Claude Code 官方配置 `~/.claude/settings.json`；
+  - 若仍没有，则在宿主安装 Claude Code（`curl -fsSL https://claude.ai/install.sh | bash`）后再初始化
 - 用户私有运行时数据：
   - opencode: `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/opencode/*`
   - claudecode: `./cloudclaw_data/user-runtime/<normalized_user>-<crc32>/claudecode/*`
