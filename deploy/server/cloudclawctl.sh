@@ -595,6 +595,7 @@ start_pool() {
     log "creating container: $name"
     env_args=()
     harden_args=()
+    tmpfs_args=()
     network_args=()
     env_file_args=()
     if [ "$RUNTIME_NAME" = "opencode" ]; then
@@ -639,6 +640,11 @@ start_pool() {
         "--tmpfs" "/tmp:rw,noexec,nosuid,nodev,size=256m"
         "--tmpfs" "/var/tmp:rw,noexec,nosuid,nodev,size=128m"
       )
+    else
+      # Some base images keep /tmp not writable for non-root. Ensure task runner tmp path is writable.
+      tmpfs_args+=(
+        "--tmpfs" "/tmp:rw,nosuid,nodev,mode=1777,size=256m"
+      )
     fi
     if [ -n "$CONTAINER_NETWORK" ]; then
       network_args+=("--network" "$CONTAINER_NETWORK")
@@ -659,6 +665,7 @@ start_pool() {
       "${network_args[@]}" \
       "${env_file_args[@]}" \
       "${harden_args[@]}" \
+      "${tmpfs_args[@]}" \
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
       -v "${DATA_DIR}/runs:${WORKSPACE_MOUNT_PATH}" \
@@ -715,6 +722,10 @@ start_cloudclaw() {
   workspace_mode="${WORKSPACE_MODE:-}"
   if [ -z "$workspace_mode" ]; then
     workspace_mode="mount"
+  fi
+  log "runner workspace settings: state=$workspace_state_mode mode=$workspace_mode remote_dir=$DOCKER_REMOTE_DIR"
+  if [ "$workspace_mode" = "copy" ]; then
+    log "warning: workspace copy mode writes inside container path ($DOCKER_REMOTE_DIR); prefer mount mode for non-root containers"
   fi
 
   cmd=(
