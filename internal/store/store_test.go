@@ -417,7 +417,8 @@ func TestTaskEventRetentionPerTask(t *testing.T) {
 	d := t.TempDir()
 	s, err := NewWithConfig(Config{
 		BaseDir:               d,
-		Driver:                "sqlite",
+		Driver:                "postgres",
+		DSN:                   testPostgresDSN(t),
 		EventRetentionPerTask: 3,
 	})
 	if err != nil {
@@ -455,7 +456,8 @@ func TestReplaceUserDataRejectsOversizedFile(t *testing.T) {
 	d := t.TempDir()
 	s, err := NewWithConfig(Config{
 		BaseDir:              d,
-		Driver:               "sqlite",
+		Driver:               "postgres",
+		DSN:                  testPostgresDSN(t),
 		MaxUserDataBytes:     1024,
 		MaxUserDataFileBytes: 4,
 	})
@@ -479,7 +481,8 @@ func TestReplaceUserDataRejectsOversizedTotal(t *testing.T) {
 	d := t.TempDir()
 	s, err := NewWithConfig(Config{
 		BaseDir:              d,
-		Driver:               "sqlite",
+		Driver:               "postgres",
+		DSN:                  testPostgresDSN(t),
 		MaxUserDataBytes:     6,
 		MaxUserDataFileBytes: 10,
 	})
@@ -761,9 +764,41 @@ func TestTaskSummaryQueries(t *testing.T) {
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	d := t.TempDir()
-	s, err := New(d)
+	s, err := NewWithConfig(Config{
+		BaseDir: d,
+		Driver:  "postgres",
+		DSN:     testPostgresDSN(t),
+	})
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
+	resetTestStoreTables(t, s)
 	return s
+}
+
+func testPostgresDSN(t *testing.T) string {
+	t.Helper()
+	for _, k := range []string{"CLOUDCLAW_TEST_POSTGRES_DSN", "CC_DB_DSN", "DB_DSN"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	t.Skip("postgres dsn not set; provide CLOUDCLAW_TEST_POSTGRES_DSN (or CC_DB_DSN/DB_DSN)")
+	return ""
+}
+
+func resetTestStoreTables(t *testing.T, s *Store) {
+	t.Helper()
+	for _, stmt := range []string{
+		"DELETE FROM task_results",
+		"DELETE FROM task_events",
+		"DELETE FROM containers",
+		"DELETE FROM snapshots",
+		"DELETE FROM user_data_files",
+		"DELETE FROM tasks",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("reset test table via %q: %v", stmt, err)
+		}
+	}
 }

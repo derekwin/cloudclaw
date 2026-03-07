@@ -6,8 +6,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CLOUDCLAWCTL="$REPO_ROOT/deploy/server/cloudclawctl.sh"
 
 GO_BIN="${GO_BIN:-go}"
-CC_DB_DRIVER="${CC_DB_DRIVER:-sqlite}"
-CC_DB_DSN="${CC_DB_DSN:-}"
+CC_DB_DRIVER="${CC_DB_DRIVER:-postgres}"
+CC_DB_DSN="${CC_DB_DSN:-${DB_DSN:-}}"
 CC_DATA_DIR="${CC_DATA_DIR:-$REPO_ROOT/cloudclaw_data/data}"
 
 log() {
@@ -119,5 +119,17 @@ prepare_output_dir() {
 }
 
 run_tasksim() {
+  local driver
+  driver="$(printf '%s' "$CC_DB_DRIVER" | tr '[:upper:]' '[:lower:]' | xargs)"
+  if [[ "$driver" == "postgresql" ]]; then
+    driver="postgres"
+  fi
+  if [[ "$driver" != "postgres" ]]; then
+    die "CC_DB_DRIVER must be postgres (got: $CC_DB_DRIVER)"
+  fi
+  if [[ -z "${CC_DB_DSN// }" ]]; then
+    die "CC_DB_DSN (or DB_DSN) is required for postgres"
+  fi
+  CC_DB_DRIVER="$driver"
   (cd "$REPO_ROOT" && "$GO_BIN" run ./cmd/tasksim "$@")
 }

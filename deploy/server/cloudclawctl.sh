@@ -49,7 +49,7 @@ FALLBACK_BASE_IMAGE="${FALLBACK_BASE_IMAGE:-}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-}"
 DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-}"
 DOCKER_REMOTE_DIR="${DOCKER_REMOTE_DIR:-/tmp/cloudclaw}"
-DB_DRIVER="${DB_DRIVER:-sqlite}"
+DB_DRIVER="${DB_DRIVER:-postgres}"
 DB_DSN="${DB_DSN:-}"
 RETRY_PRIORITY="${RETRY_PRIORITY:-0}"
 CONTAINER_HARDEN="${CONTAINER_HARDEN:-1}"
@@ -115,6 +115,22 @@ require_arg() {
 require_runtime() {
   if [ -z "$AGENT_RUNTIME" ]; then
     die "AGENT_RUNTIME is required (opencode|openclaw|claudecode)"
+  fi
+}
+
+ensure_db_config() {
+  DB_DRIVER="$(printf '%s' "$DB_DRIVER" | tr '[:upper:]' '[:lower:]' | xargs)"
+  if [ -z "$DB_DRIVER" ]; then
+    DB_DRIVER="postgres"
+  fi
+  if [ "$DB_DRIVER" = "postgresql" ]; then
+    DB_DRIVER="postgres"
+  fi
+  if [ "$DB_DRIVER" != "postgres" ]; then
+    die "unsupported DB_DRIVER=$DB_DRIVER (only postgres is supported)"
+  fi
+  if [ -z "${DB_DSN// }" ]; then
+    die "DB_DSN is required when DB_DRIVER=postgres"
   fi
 }
 
@@ -824,6 +840,7 @@ status_pool() {
 
 start_cloudclaw() {
   load_runtime_profile
+  ensure_db_config
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
     echo "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)" >&2
@@ -877,6 +894,7 @@ start_cloudclaw() {
 }
 
 prune_opencode_userdata() {
+  ensure_db_config
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
     die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
@@ -927,6 +945,7 @@ runner_logs() {
 
 status_all() {
   load_runtime_profile
+  ensure_db_config
   ensure_dirs
   log "cloudclaw status"
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -979,12 +998,13 @@ status_watch() {
 
 smoke() {
   load_runtime_profile
+  ensure_db_config
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
     echo "cloudclaw binary not found: $CLOUDCLAW_BIN" >&2
     exit 1
   fi
 
-  submit_out="$($CLOUDCLAW_BIN task submit --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --user-id smoke_user --task-type smoke --input "smoke test, tell me who you are.")"
+  submit_out="$($CLOUDCLAW_BIN task submit --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --user-id smoke_user --task-type smoke --input "smoke test, tell me who you are.")"
   task_id="$(printf '%s' "$submit_out" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p' | head -n1)"
   if [ -z "$task_id" ]; then
     echo "failed to parse task id from submit output" >&2
@@ -994,7 +1014,7 @@ smoke() {
 
   log "submitted smoke task: $task_id"
   for _ in $(seq 1 30); do
-    status_json="$($CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --task-id "$task_id")"
+    status_json="$($CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id")"
     status="$(printf '%s' "$status_json" | sed -n 's/.*"status": "\([^"]*\)".*/\1/p' | head -n1)"
     if [ "$status" = "SUCCEEDED" ]; then
       echo "$status_json"
@@ -1008,7 +1028,7 @@ smoke() {
   done
 
   log "smoke task did not finish in time"
-  $CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --task-id "$task_id"
+  $CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id"
   exit 1
 }
 
@@ -1061,6 +1081,8 @@ Environment overrides:
   AGENT_RUNTIME (required: opencode|openclaw|claudecode)
   CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
   CC_HOME_FILE (default: $REPO_ROOT/cloudclaw_data-home, stores persisted CC_HOME)
+  DB_DRIVER (default: postgres; postgres only)
+  DB_DSN (required: postgres://user:pass@host:port/db?sslmode=disable)
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
@@ -1095,6 +1117,7 @@ Environment overrides:
 
 Notes:
   AGENT_RUNTIME must be specified; no default runtime is assumed.
+  PostgreSQL is required; set DB_DSN before running db-related commands.
   opencode shared config dir: <CC_HOME>/shared/opencode
   openclaw shared config dir: <CC_HOME>/shared/openclaw
   openclaw init does NOT fallback to opencode config; host openclaw config must be prepared first.
@@ -1164,6 +1187,7 @@ cmd_db() {
 }
 
 task_status_json() {
+  ensure_db_config
   local task_id="$1"
   cmd=(
     "$CLOUDCLAW_BIN" task status
@@ -1182,6 +1206,7 @@ cmd_task() {
   local task_id="${2:-}"
   local arg3="${3:-}"
   local limit="${2:-8}"
+  ensure_db_config
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
     die "cloudclaw binary not found: $CLOUDCLAW_BIN (run: $0 install)"
@@ -1303,6 +1328,7 @@ cmd_task() {
 cmd_result() {
   local action="${1:-dequeue}"
   local arg="${2:-}"
+  ensure_db_config
   case "$action" in
     dequeue)
       if [ -z "$arg" ]; then

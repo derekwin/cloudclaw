@@ -2,6 +2,7 @@ package cloudclaw
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"cloudclaw/internal/model"
@@ -22,9 +23,20 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = "./cloudclaw_data/data"
 	}
-	if cfg.DBDriver == "" {
-		cfg.DBDriver = "sqlite"
+	driver := strings.ToLower(strings.TrimSpace(cfg.DBDriver))
+	if driver == "" {
+		driver = "postgres"
 	}
+	if driver == "postgresql" {
+		driver = "postgres"
+	}
+	if driver != "postgres" {
+		return nil, fmt.Errorf("unsupported db driver %q: only postgres is supported", cfg.DBDriver)
+	}
+	if strings.TrimSpace(cfg.DBDSN) == "" {
+		return nil, fmt.Errorf("postgres dsn is required")
+	}
+	cfg.DBDriver = driver
 	s, err := store.NewWithConfig(store.Config{
 		BaseDir: cfg.DataDir,
 		Driver:  cfg.DBDriver,
