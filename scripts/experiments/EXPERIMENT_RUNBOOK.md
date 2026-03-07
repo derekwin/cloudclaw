@@ -1,6 +1,7 @@
 # CloudClaw 四个实验一键顺序命令
 
 本文件给出从环境准备到 4 个实验依次执行的完整命令。
+说明：当前 CloudClaw 仅支持 PostgreSQL。
 
 ## 0) 环境准备（只需一次）
 
@@ -18,12 +19,11 @@ export CONTAINER_HARDEN=1
 export CONTAINER_PIDS_LIMIT=256
 export CONTAINER_NETWORK=host
 
-# 初始化 + 启动 cloudclaw
+# 初始化共享配置（先不启动 runner）
 bash deploy/server/cloudclawctl.sh init
-bash deploy/server/cloudclawctl.sh up
 ```
 
-## 1) 启动 PostgreSQL（推荐用于高并发实验）
+## 1) 启动 PostgreSQL（必需）
 
 ```bash
 cd ~/liujinyao/cloudclaw
@@ -36,10 +36,14 @@ export DB_DRIVER=postgres
 export DB_DSN='postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable'
 export CC_DB_DRIVER=postgres
 export CC_DB_DSN="$DB_DSN"
+export CLOUDCLAW_TEST_POSTGRES_DSN="$DB_DSN"
 
-# 让 runner 生效
+# 启动 cloudclaw（首次）
 export AGENT_RUNTIME=opencode
-bash deploy/server/cloudclawctl.sh runner restart
+bash deploy/server/cloudclawctl.sh up
+
+# 若已在运行，改用：
+# bash deploy/server/cloudclawctl.sh runner restart
 ```
 
 ## 2) 实验一：吞吐与时延（并发 10~1000）
@@ -120,6 +124,8 @@ scripts/experiments/04_retry_priority_gain.sh
 
 ```bash
 export AGENT_RUNTIME=opencode
+# 需确保 DB_DSN 在当前 shell 中仍然存在
+# export DB_DSN='postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable'
 bash deploy/server/cloudclawctl.sh status
 bash deploy/server/cloudclawctl.sh status watch 2
 bash deploy/server/cloudclawctl.sh runner logs 200
@@ -136,4 +142,3 @@ scripts/experiments/00_postgres_down.sh
 # 若要连数据卷一起删除
 # REMOVE_DATA=1 scripts/experiments/00_postgres_down.sh
 ```
-
