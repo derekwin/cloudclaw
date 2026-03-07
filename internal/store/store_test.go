@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -316,6 +317,99 @@ func TestReplaceUserDataRemovesDeletedFiles(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(dst, "new.txt")); err != nil || string(b) != "new" {
 		t.Fatalf("unexpected new.txt, err=%v val=%q", err, string(b))
+	}
+}
+
+func TestUserDataIsolationAcrossUsersWithSameFilename(t *testing.T) {
+	s := newTestStore(t)
+
+	writeUserData := func(userID, content string) {
+		src := filepath.Join(t.TempDir(), userID)
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			t.Fatalf("mkdir src for %s: %v", userID, err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "workspace.txt"), []byte(content), 0o644); err != nil {
+			t.Fatalf("write workspace for %s: %v", userID, err)
+		}
+		if err := s.ReplaceUserDataFromDir(userID, src); err != nil {
+			t.Fatalf("replace user data for %s: %v", userID, err)
+		}
+	}
+
+	writeUserData("u1", "alpha")
+	writeUserData("u2", "beta")
+
+	dst1 := filepath.Join(t.TempDir(), "u1")
+	dst2 := filepath.Join(t.TempDir(), "u2")
+	if err := s.RestoreUserDataToDir("u1", dst1); err != nil {
+		t.Fatalf("restore u1: %v", err)
+	}
+	if err := s.RestoreUserDataToDir("u2", dst2); err != nil {
+		t.Fatalf("restore u2: %v", err)
+	}
+
+	b1, err := os.ReadFile(filepath.Join(dst1, "workspace.txt"))
+	if err != nil {
+		t.Fatalf("read u1 workspace: %v", err)
+	}
+	b2, err := os.ReadFile(filepath.Join(dst2, "workspace.txt"))
+	if err != nil {
+		t.Fatalf("read u2 workspace: %v", err)
+	}
+	if string(b1) != "alpha" {
+		t.Fatalf("unexpected u1 content: %q", string(b1))
+	}
+	if string(b2) != "beta" {
+		t.Fatalf("unexpected u2 content: %q", string(b2))
+	}
+}
+
+func TestReplaceUserDataRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior varies on windows")
+	}
+
+	s := newTestStore(t)
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write real file: %v", err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(src, "link.txt")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	if err := s.ReplaceUserDataFromDir("u1", src); err == nil || !strings.Contains(err.Error(), "symlink is not supported") {
+		t.Fatalf("expected symlink rejection, got: %v", err)
+	}
+}
+
+func TestIsSafeRelativePathRejectsTraversal(t *testing.T) {
+	for _, p := range []string{
+		"",
+		" ",
+		".",
+		"..",
+		"../a",
+		"/abs",
+		"a/../../b",
+	} {
+		if isSafeRelativePath(p) {
+			t.Fatalf("expected path to be rejected: %q", p)
+		}
+	}
+
+	for _, p := range []string{
+		"a.txt",
+		"dir/a.txt",
+		"dir/../a.txt",
+		"./a.txt",
+	} {
+		if !isSafeRelativePath(p) {
+			t.Fatalf("expected path to be accepted: %q", p)
+		}
 	}
 }
 

@@ -123,6 +123,67 @@ func TestPersistPrunesTransientArtifactsInCopyMode(t *testing.T) {
 	}
 }
 
+func TestPersistPrunesOpenclawRuntimeArtifactsInCopyMode(t *testing.T) {
+	store := &captureStore{}
+	manager, err := NewLocalManager(LocalManagerConfig{
+		Store:            store,
+		RuntimeName:      "openclaw",
+		SharedSkillsMode: "copy",
+	})
+	if err != nil {
+		t.Fatalf("new local manager: %v", err)
+	}
+
+	runDir := t.TempDir()
+	mustWrite := func(rel string) {
+		abs := filepath.Join(runDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	mustWrite(".openclaw-home/.local/share/openclaw/auth.json")
+	mustWrite(".openclaw-home/.local/share/openclaw/openclaw.db")
+	mustWrite(".openclaw-home/.local/share/openclaw/openclaw.db-shm")
+	mustWrite(".openclaw-home/.local/share/openclaw/openclaw.db-wal")
+	mustWrite(".openclaw-home/.local/share/openclaw/bin/cache.txt")
+	mustWrite(".openclaw-home/.local/share/openclaw/log/1.log")
+	mustWrite("workspace.txt")
+
+	if err := manager.Persist(model.Task{ID: "to1", UserID: "u1"}, runDir); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+
+	got := make(map[string]struct{}, len(store.replacedFiles))
+	for _, f := range store.replacedFiles {
+		got[f] = struct{}{}
+	}
+
+	for _, removed := range []string{
+		".openclaw-home/.local/share/openclaw/openclaw.db-shm",
+		".openclaw-home/.local/share/openclaw/openclaw.db-wal",
+		".openclaw-home/.local/share/openclaw/bin/cache.txt",
+		".openclaw-home/.local/share/openclaw/log/1.log",
+	} {
+		if _, ok := got[removed]; ok {
+			t.Fatalf("expected %s to be pruned, got files=%v", removed, store.replacedFiles)
+		}
+	}
+
+	for _, kept := range []string{
+		".openclaw-home/.local/share/openclaw/auth.json",
+		".openclaw-home/.local/share/openclaw/openclaw.db",
+		"workspace.txt",
+	} {
+		if _, ok := got[kept]; !ok {
+			t.Fatalf("expected %s to be kept, got files=%v", kept, store.replacedFiles)
+		}
+	}
+}
+
 func TestPrepareAndPersistEphemeralWorkspaceState(t *testing.T) {
 	runDir := filepath.Join(t.TempDir(), "run")
 	store := &captureStore{runDir: runDir}

@@ -88,7 +88,7 @@ func runCmd(args []string) error {
 	userRuntimeDir := fs.String("user-runtime-dir", "", "host directory for per-user runtime state in ephemeral workspace mode")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
-	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
+	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for runtime pods")
 	k8sContext := fs.String("k8s-context", "", "optional kubernetes context")
 	k8sLabelSelector := fs.String("k8s-label-selector", defaultK8sLabelSelector, "label selector for runtime pods")
@@ -107,11 +107,12 @@ func runCmd(args []string) error {
 	eventRetentionPerTask := fs.Int("event-retention-per-task", 2000, "max number of task events retained per task")
 	maxUserDataBytes := fs.Int64("max-user-data-bytes", 256<<20, "max total bytes per user's persisted workspace data")
 	maxUserDataFileBytes := fs.Int64("max-user-data-file-bytes", 32<<20, "max bytes per persisted user data file")
+	retryPriority := fs.Int("retry-priority", 0, "priority used when retrying/recovering tasks (0=retry-first, 1=normal)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*executorMode) == "" {
-		return fmt.Errorf("executor is required: k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode")
+		return fmt.Errorf("executor is required: k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode")
 	}
 	applyExecutorRuntimeDefaults(*executorMode, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix)
 
@@ -122,6 +123,7 @@ func runCmd(args []string) error {
 		EventRetentionPerTask: *eventRetentionPerTask,
 		MaxUserDataBytes:      *maxUserDataBytes,
 		MaxUserDataFileBytes:  *maxUserDataFileBytes,
+		RetryQueuePriority:    *retryPriority,
 	})
 	if err != nil {
 		return err
@@ -143,7 +145,7 @@ func runCmd(args []string) error {
 	var ex engine.Executor
 	var pool portsPool
 	switch *executorMode {
-	case "k8s-opencode", "k8s-claudecode":
+	case "k8s-opencode", "k8s-openclaw", "k8s-claudecode":
 		if strings.TrimSpace(*k8sTaskCmd) == "" {
 			return fmt.Errorf("k8s-task-cmd is required for %s executor", *executorMode)
 		}
@@ -168,10 +170,12 @@ func runCmd(args []string) error {
 		}
 		if *executorMode == "k8s-opencode" {
 			ex = &engine.K8sOpencodeExecutor{K8sRuntimeExecutor: runtimeExecutor}
+		} else if *executorMode == "k8s-openclaw" {
+			ex = &engine.K8sOpenclawExecutor{K8sRuntimeExecutor: runtimeExecutor}
 		} else {
 			ex = &engine.K8sClaudecodeExecutor{K8sRuntimeExecutor: runtimeExecutor}
 		}
-	case "docker-opencode", "docker-claudecode":
+	case "docker-opencode", "docker-openclaw", "docker-claudecode":
 		if strings.TrimSpace(*dockerTaskCmd) == "" {
 			return fmt.Errorf("docker-task-cmd is required for %s executor", *executorMode)
 		}
@@ -202,6 +206,8 @@ func runCmd(args []string) error {
 		}
 		if *executorMode == "docker-opencode" {
 			ex = &engine.DockerOpencodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
+		} else if *executorMode == "docker-openclaw" {
+			ex = &engine.DockerOpenclawExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		} else {
 			ex = &engine.DockerClaudecodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		}
@@ -577,7 +583,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-opencode|k8s-claudecode|docker-opencode|docker-claudecode]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
@@ -664,8 +670,11 @@ func workspaceContainerDirForDocker(mode, mountPath string) string {
 
 func runtimeNameForExecutor(executorMode string) string {
 	mode := strings.ToLower(strings.TrimSpace(executorMode))
-	if strings.Contains(mode, "claudecode") {
+	if isClaudecodeExecutor(mode) {
 		return "claudecode"
+	}
+	if isOpenclawExecutor(mode) {
+		return "openclaw"
 	}
 	return "opencode"
 }
@@ -748,7 +757,22 @@ func printSummaryTaskList(tasks []taskSummaryTask) {
 
 func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix *string) {
 	mode := strings.ToLower(strings.TrimSpace(executorMode))
-	if !strings.Contains(mode, "claudecode") {
+	if isOpenclawExecutor(mode) {
+		if strings.TrimSpace(*k8sLabelSelector) == defaultK8sLabelSelector {
+			*k8sLabelSelector = "app=openclaw-agent"
+		}
+		if strings.TrimSpace(*dockerLabelSelector) == defaultDockerLabelSelector {
+			*dockerLabelSelector = "app=openclaw-agent"
+		}
+		if strings.TrimSpace(*dockerImage) == defaultDockerImage {
+			*dockerImage = "ghcr.io/anomalyco/openclaw:latest"
+		}
+		if strings.TrimSpace(*dockerNamePrefix) == defaultDockerNamePrefix {
+			*dockerNamePrefix = "openclaw-agent"
+		}
+		return
+	}
+	if !isClaudecodeExecutor(mode) {
 		return
 	}
 
@@ -764,4 +788,12 @@ func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerL
 	if strings.TrimSpace(*dockerNamePrefix) == defaultDockerNamePrefix {
 		*dockerNamePrefix = "claudecode-agent"
 	}
+}
+
+func isOpenclawExecutor(mode string) bool {
+	return strings.Contains(mode, "openclaw")
+}
+
+func isClaudecodeExecutor(mode string) bool {
+	return strings.Contains(mode, "claudecode")
 }

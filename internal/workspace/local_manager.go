@@ -24,7 +24,7 @@ type LocalManagerConfig struct {
 	SharedSkillsDir  string
 	SharedSkillsMode string // copy | mount
 	WorkspaceState   string // db | ephemeral (alias: none)
-	RuntimeName      string // opencode | claudecode
+	RuntimeName      string // opencode | openclaw | claudecode
 	UserRuntimeDir   string // host dir to persist per-user runtime state for ephemeral mode
 }
 
@@ -96,6 +96,8 @@ func normalizeRuntimeName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "claudecode":
 		return "claudecode"
+	case "openclaw":
+		return "openclaw"
 	default:
 		return "opencode"
 	}
@@ -113,10 +115,8 @@ func (m *LocalManager) Persist(task model.Task, runDir string) error {
 	if m.sharedSkillsMode == "copy" {
 		_ = os.RemoveAll(filepath.Join(runDir, ".cloudclaw_shared_skills"))
 	}
-	if m.runtimeName == "opencode" {
-		if err := pruneOpencodeRuntimeArtifacts(runDir); err != nil {
-			return err
-		}
+	if err := m.pruneRuntimeStateArtifacts(runDir); err != nil {
+		return err
 	}
 	if err := m.pruneRuntimeArtifacts(runDir); err != nil {
 		return err
@@ -180,10 +180,14 @@ func (m *LocalManager) userRuntimeRuntimeDir(userID string) string {
 }
 
 func (m *LocalManager) runtimeStateDir(runDir string) string {
-	if m.runtimeName == "claudecode" {
+	switch m.runtimeName {
+	case "claudecode":
 		return filepath.Join(runDir, ".claudecode-home")
+	case "openclaw":
+		return filepath.Join(runDir, ".openclaw-home", ".local", "share", "openclaw")
+	default:
+		return filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
 	}
-	return filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
 }
 
 var unsafeUserCharPattern = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -202,8 +206,7 @@ func safeUserRuntimeName(userID string) string {
 	return fmt.Sprintf("%s-%d", base, sum)
 }
 
-func pruneOpencodeRuntimeArtifacts(runDir string) error {
-	opencodeStateDir := filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
+func pruneRuntimeDataArtifacts(stateDir, dbBase string) error {
 	for _, name := range []string{
 		"bin",
 		"log",
@@ -211,16 +214,34 @@ func pruneOpencodeRuntimeArtifacts(runDir string) error {
 		"storage",
 		"tool-output",
 	} {
-		if err := os.RemoveAll(filepath.Join(opencodeStateDir, name)); err != nil {
+		if err := os.RemoveAll(filepath.Join(stateDir, name)); err != nil {
 			return err
 		}
 	}
-	for _, name := range []string{"opencode.db-shm", "opencode.db-wal"} {
-		if err := os.Remove(filepath.Join(opencodeStateDir, name)); err != nil && !os.IsNotExist(err) {
+	for _, name := range []string{
+		dbBase + ".db-shm",
+		dbBase + ".db-wal",
+		"opencode.db-shm",
+		"opencode.db-wal",
+		"openclaw.db-shm",
+		"openclaw.db-wal",
+	} {
+		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+func (m *LocalManager) pruneRuntimeStateArtifacts(runDir string) error {
+	switch m.runtimeName {
+	case "opencode":
+		return pruneRuntimeDataArtifacts(filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode"), "opencode")
+	case "openclaw":
+		return pruneRuntimeDataArtifacts(filepath.Join(runDir, ".openclaw-home", ".local", "share", "openclaw"), "openclaw")
+	default:
+		return nil
+	}
 }
 
 func (m *LocalManager) pruneRuntimeArtifacts(runDir string) error {
