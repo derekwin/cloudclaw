@@ -55,7 +55,7 @@ RETRY_PRIORITY="${RETRY_PRIORITY:-0}"
 CONTAINER_HARDEN="${CONTAINER_HARDEN:-1}"
 CONTAINER_PIDS_LIMIT="${CONTAINER_PIDS_LIMIT:-512}"
 CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
-CONTAINER_NETWORK="${CONTAINER_NETWORK:-}"
+CONTAINER_NETWORK="${CONTAINER_NETWORK:-host}"
 AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 OPENCODE_HOST_CONFIG_DIR="${OPENCODE_HOST_CONFIG_DIR:-$HOME/.config/opencode}"
 OPENCLAW_HOST_CONFIG_DIR="${OPENCLAW_HOST_CONFIG_DIR:-$HOME/.config/openclaw}"
@@ -1072,7 +1072,7 @@ Environment overrides:
   CONTAINER_HARDEN (default: 1; no-new-privileges + cap-drop + pids-limit)
   CONTAINER_PIDS_LIMIT (default: 512, used when CONTAINER_HARDEN=1)
   CONTAINER_READONLY_ROOTFS (default: 0; set 1 to enable read-only rootfs with tmpfs for /tmp)
-  CONTAINER_NETWORK (optional docker network name, e.g. internal)
+  CONTAINER_NETWORK (default: host; set custom docker network name if needed)
   AGENT_ENV_FILE (optional env file path for sensitive vars like API keys)
   OPENCODE_CONFIG_MOUNT_PATH (default: /workspace/.config/opencode)
   OPENCLAW_CONFIG_MOUNT_PATH (default: /workspace/.config/openclaw)
