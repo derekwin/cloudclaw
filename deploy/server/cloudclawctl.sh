@@ -57,6 +57,8 @@ CONTAINER_READONLY_ROOTFS="${CONTAINER_READONLY_ROOTFS:-0}"
 CONTAINER_NETWORK="${CONTAINER_NETWORK:-}"
 AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 OPENCODE_HOST_CONFIG_DIR="${OPENCODE_HOST_CONFIG_DIR:-$HOME/.config/opencode}"
+CLAUDECODE_HOST_CONFIG_DIR="${CLAUDECODE_HOST_CONFIG_DIR:-$HOME/.claudecode}"
+CLAUDECODE_OFFICIAL_CONFIG_DIR="${CLAUDECODE_OFFICIAL_CONFIG_DIR:-$HOME/.claude}"
 OPENCODE_CONFIG_MOUNT_PATH="${OPENCODE_CONFIG_MOUNT_PATH:-/workspace/.config/opencode}"
 CLAUDECODE_CONFIG_MOUNT_PATH="${CLAUDECODE_CONFIG_MOUNT_PATH:-/workspace/.claudecode}"
 WORKSPACE_MOUNT_PATH="${WORKSPACE_MOUNT_PATH:-/workspace/cloudclaw/runs}"
@@ -270,6 +272,71 @@ bootstrap_host_opencode_config_if_missing() {
   fi
 }
 
+resolve_host_claude_bin() {
+  if command -v claudecode >/dev/null 2>&1; then
+    command -v claudecode
+    return 0
+  fi
+  if command -v claude >/dev/null 2>&1; then
+    command -v claude
+    return 0
+  fi
+  for candidate in "$HOME/.local/bin/claudecode" "$HOME/bin/claudecode" "$HOME/.local/bin/claude" "$HOME/bin/claude"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_host_claude_installed() {
+  local claude_bin
+  if claude_bin="$(resolve_host_claude_bin)"; then
+    log "host claude code already installed: $claude_bin"
+    return 0
+  fi
+
+  need_cmd curl
+  need_cmd bash
+  log "host claude code not found, installing: curl -fsSL https://claude.ai/install.sh | bash"
+  if ! /bin/sh -c 'curl -fsSL https://claude.ai/install.sh | bash'; then
+    die "failed to install claude code on host"
+  fi
+  if ! claude_bin="$(resolve_host_claude_bin)"; then
+    die "claude code installed but executable not found (tried PATH and ~/.local/bin)"
+  fi
+  log "host claude code installed: $claude_bin"
+}
+
+bootstrap_host_claudecode_config_if_missing() {
+  local claude_bin
+
+  mkdir -p "$CLAUDECODE_HOST_CONFIG_DIR"
+  if [ -s "$CLAUDECODE_HOST_CONFIG_DIR/config.json" ]; then
+    return 0
+  fi
+
+  # Claude Code official user settings location.
+  if [ -s "$CLAUDECODE_OFFICIAL_CONFIG_DIR/settings.json" ]; then
+    cp -f "$CLAUDECODE_OFFICIAL_CONFIG_DIR/settings.json" "$CLAUDECODE_HOST_CONFIG_DIR/config.json"
+    return 0
+  fi
+
+  ensure_host_claude_installed
+  claude_bin="$(resolve_host_claude_bin)" || die "claude code executable not found after installation"
+
+  "$claude_bin" config list >/tmp/cloudclaw-claude-config-list.log 2>&1 || true
+  "$claude_bin" --help >/tmp/cloudclaw-claude-help.log 2>&1 || true
+
+  if [ -s "$CLAUDECODE_OFFICIAL_CONFIG_DIR/settings.json" ]; then
+    cp -f "$CLAUDECODE_OFFICIAL_CONFIG_DIR/settings.json" "$CLAUDECODE_HOST_CONFIG_DIR/config.json"
+  fi
+  if [ ! -s "$CLAUDECODE_HOST_CONFIG_DIR/config.json" ]; then
+    die "host claudecode config is still missing: $CLAUDECODE_HOST_CONFIG_DIR/config.json"
+  fi
+}
+
 ensure_runtime_config_ready() {
   load_runtime_profile
   ensure_dirs
@@ -298,7 +365,7 @@ ensure_runtime_config_for_up() {
   if [ -s "$RUNTIME_CONFIG_FILE" ]; then
     return
   fi
-  log "config not found, generating full template (same as: AGENT_RUNTIME=$RUNTIME_NAME $0 init)"
+  log "config not found, initializing (same as: AGENT_RUNTIME=$RUNTIME_NAME $0 init)"
   init_full_config
 }
 
@@ -368,7 +435,7 @@ edit_config() {
     return
   fi
   if [ ! -s "$RUNTIME_CONFIG_FILE" ]; then
-    log "config not found, initializing full template first"
+    log "config not found, initializing first"
     init_full_config
   fi
   editor="${EDITOR:-vi}"
@@ -399,64 +466,18 @@ log "initialized opencode config: $RUNTIME_CONFIG_FILE"
 
 init_claudecode_config_full() {
   ensure_dirs
-  ensure_runner_image
-
-  if [ -f "$RUNTIME_CONFIG_FILE" ]; then
-    cp "$RUNTIME_CONFIG_FILE" "$RUNTIME_CONFIG_FILE.bak"
-    log "backup created: $RUNTIME_CONFIG_FILE.bak"
+  mkdir -p "$RUNTIME_CONFIG_DIR"
+  if [ -d "$RUNTIME_CONFIG_DIR" ] && [ -n "$(ls -A "$RUNTIME_CONFIG_DIR" 2>/dev/null)" ]; then
+    log "claudecode shared config already exists, skip bootstrap: $RUNTIME_CONFIG_DIR"
+    return
   fi
 
-  docker run --rm --entrypoint /bin/sh "$RUNNER_IMAGE" -lc '
-set -eu
-HOME=/tmp/claudecode-home
-mkdir -p "$HOME"
-
-if command -v claudecode >/dev/null 2>&1; then
-  claudecode config init >/tmp/claudecode-config-init.log 2>&1 || true
-  claudecode init >/tmp/claudecode-init.log 2>&1 || true
-fi
-
-for p in \
-  "$HOME/.claudecode/config.json" \
-  "$HOME/.config/claudecode/config.json" \
-  "$HOME/.claudecode/claudecode.json" \
-  "/root/.claudecode/config.json" \
-  "/root/.config/claudecode/config.json" \
-  "/root/.claudecode/claudecode.json" \
-  "/workspace/.claudecode/config.json" \
-  "/workspace/.claudecode/claudecode.json" \
-  "/app/config/config.json" \
-  "/app/config/claudecode.json" \
-  "/app/config/claudecode.example.json" \
-  "/config/config.json" \
-  "/config/claudecode.json" \
-  "/config/claudecode.example.json" \
-  "/workspace/config/config.json" \
-  "/workspace/config/claudecode.json" \
-  "/workspace/config/claudecode.example.json"; do
-  if [ -s "$p" ]; then
-    cat "$p"
-    exit 0
+  bootstrap_host_claudecode_config_if_missing
+  cp -R "$CLAUDECODE_HOST_CONFIG_DIR/." "$RUNTIME_CONFIG_DIR/" || true
+  if [ ! -s "$RUNTIME_CONFIG_FILE" ]; then
+    die "failed to bootstrap claudecode config from host: $CLAUDECODE_HOST_CONFIG_DIR -> $RUNTIME_CONFIG_FILE"
   fi
-done
-
-example="$(find / -maxdepth 6 -type f \( -name "claudecode*.json" -o -name "*claudecode*config*.json" -o -name "config.example.json" \) 2>/dev/null | head -n 1 || true)"
-if [ -n "$example" ] && [ -s "$example" ]; then
-  cat "$example"
-  exit 0
-fi
-
-echo "unable to generate full config from claudecode image" >&2
-exit 1
-' > "$RUNTIME_CONFIG_FILE.tmp"
-
-if [ ! -s "$RUNTIME_CONFIG_FILE.tmp" ]; then
-  rm -f "$RUNTIME_CONFIG_FILE.tmp"
-  die "generated config is empty"
-fi
-
-mv -f "$RUNTIME_CONFIG_FILE.tmp" "$RUNTIME_CONFIG_FILE"
-log "initialized full config template: $RUNTIME_CONFIG_FILE"
+  log "initialized claudecode config: $RUNTIME_CONFIG_FILE"
 }
 
 init_full_config() {
@@ -496,7 +517,7 @@ EOF
 claudecode config path:
   $RUNTIME_CONFIG_FILE
 
-Optional: generate a full template from claudecode first:
+Optional: initialize claudecode shared config from host (auto-installs Claude Code if missing):
   AGENT_RUNTIME=claudecode bash $0 config init-full
 
 Then run:
@@ -887,6 +908,8 @@ Environment overrides:
   WORKSPACE_MODE (optional: mount|copy; default: mount)
   OPENCODE_PERSIST_MODE (optional: auto|minimal|full; default handled by runtime script)
   WORKSPACE_STATE_MODE (optional: db|ephemeral; default: ephemeral)
+  CLAUDECODE_HOST_CONFIG_DIR (default: ~/.claudecode, source path for claudecode init bootstrap)
+  CLAUDECODE_OFFICIAL_CONFIG_DIR (default: ~/.claude, official Claude Code settings dir, imported as config.json)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
   DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_claudecode_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
