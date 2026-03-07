@@ -833,6 +833,7 @@ status_all() {
     --db-driver "$DB_DRIVER"
     --limit "${STATUS_TASK_LIMIT:-8}"
     --format text
+    --container-prefix "$POOL_NAME_PREFIX"
   )
   if [ -n "$DB_DSN" ]; then
     summary_cmd+=(--db-dsn "$DB_DSN")
@@ -1082,6 +1083,7 @@ cmd_task() {
         --db-driver "$DB_DRIVER"
         --limit "$limit"
         --format text
+        --container-prefix "$POOL_NAME_PREFIX"
       )
       if [ -n "$DB_DSN" ]; then
         cmd+=(--db-dsn "$DB_DSN")

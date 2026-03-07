@@ -347,6 +347,7 @@ func taskSummaryCmd(args []string) error {
 	sf := bindCommonStoreFlags(fs)
 	limit := fs.Int("limit", 10, "limit per task list section")
 	format := fs.String("format", "json", "output format: json|text")
+	containerPrefix := fs.String("container-prefix", "", "only include containers whose id has this prefix")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -413,7 +414,11 @@ func taskSummaryCmd(args []string) error {
 		}
 
 		sort.Slice(containers, func(i, j int) bool { return containers[i].ID < containers[j].ID })
+		prefix := strings.TrimSpace(*containerPrefix)
 		for _, c := range containers {
+			if prefix != "" && !strings.HasPrefix(c.ID, prefix) {
+				continue
+			}
 			item := taskSummaryContainer{
 				ID:        c.ID,
 				State:     c.State,
@@ -576,7 +581,7 @@ func usage() {
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
-	  cloudclaw task summary [--limit 10 --format json|text]
+	  cloudclaw task summary [--limit 10 --format json|text --container-prefix opencode-agent]
 	  cloudclaw result dequeue [--limit 20]
 	  cloudclaw result get --task-id tsk_xxx
 	  cloudclaw user-data prune-opencode-runtime
