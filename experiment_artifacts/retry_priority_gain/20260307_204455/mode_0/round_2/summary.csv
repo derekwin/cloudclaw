@@ -1,0 +1,2 @@
+task_type,started_at,finished_at,duration_ms,submitted,completed,succeeded,failed,canceled,submit_errors,foreign_consumed,throughput_tps,e2e_p50_ms,e2e_p95_ms,e2e_p99_ms,e2e_max_ms,queue_p95_ms,run_p95_ms,attempt_p95,retries_observed,requeue_events,recovered_events,recovered_task_total,recovered_task_success,recovered_task_success_rate
+exp_fi_1772887829,2026-03-07T12:50:29.251710998Z,2026-03-07T12:57:26.771101847Z,417519,40,40,23,17,0,0,0,0.0958,145668.00,362892.45,404972.45,417002.00,9927.90,361289.30,11.00,22,186,184,22,5,0.2273

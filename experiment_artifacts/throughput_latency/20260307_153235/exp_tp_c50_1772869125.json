@@ -1,0 +1,84 @@
+{
+  "task_type": "exp_tp_c50_1772869125",
+  "started_at": "2026-03-07T07:38:45.953092946Z",
+  "finished_at": "2026-03-07T07:57:43.964992091Z",
+  "duration_ms": 1138011,
+  "submitted": 50,
+  "completed": 50,
+  "succeeded": 50,
+  "failed": 0,
+  "canceled": 0,
+  "submit_errors": 0,
+  "foreign_consumed": 0,
+  "throughput_tps": 0.043936306415315846,
+  "end_to_end_latency_ms": {
+    "count": 50,
+    "min": 10179,
+    "max": 1137924,
+    "mean": 580076.1,
+    "p50": 478621.5,
+    "p90": 1081778.3,
+    "p95": 1112523.8,
+    "p99": 1132940.7
+  },
+  "delivery_lag_ms": {
+    "count": 50,
+    "min": 6,
+    "max": 198,
+    "mean": 92.4,
+    "p50": 90.5,
+    "p90": 162.6,
+    "p95": 190.25,
+    "p99": 198
+  },
+  "queue_latency_ms": {
+    "count": 50,
+    "min": 78,
+    "max": 1016649,
+    "mean": 321297.1,
+    "p50": 121504.5,
+    "p90": 972674.5,
+    "p95": 994964.05,
+    "p99": 1011086.52
+  },
+  "run_latency_ms": {
+    "count": 50,
+    "min": 9518,
+    "max": 1014114,
+    "mean": 258787.76,
+    "p50": 111045.5,
+    "p90": 597604.5,
+    "p95": 628414.5,
+    "p99": 841005.82
+  },
+  "attempt_count": {
+    "count": 50,
+    "min": 1,
+    "max": 1,
+    "mean": 1,
+    "p50": 1,
+    "p90": 1,
+    "p95": 1,
+    "p99": 1
+  },
+  "retries_observed": 0,
+  "event_recovery": {
+    "requeue_events": 0,
+    "recovered_events": 0,
+    "recovery_latency_ms": {
+      "count": 0,
+      "min": 0,
+      "max": 0,
+      "mean": 0,
+      "p50": 0,
+      "p90": 0,
+      "p95": 0,
+      "p99": 0
+    },
+    "recovered_task_total": 0,
+    "recovered_task_success": 0,
+    "recovered_task_rate": 0,
+    "recovered_task_success_rate": 0
+  },
+  "generated_at": "2026-03-07T07:57:43.965008667Z"
+}

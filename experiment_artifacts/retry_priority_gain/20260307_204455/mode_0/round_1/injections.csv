@@ -1,0 +1,6 @@
+timestamp,action,target,result
+2026-03-07T20:45:56+0800,kill_container,5b61529e768d,ok
+2026-03-07T20:46:57+0800,kill_runner,runner,ok_restart
+2026-03-07T20:47:58+0800,kill_container,d7244d1f6725,ok
+2026-03-07T20:48:58+0800,kill_container,b63cec4f7f8e,ok
+2026-03-07T20:49:58+0800,kill_container,f39b717ea989,ok

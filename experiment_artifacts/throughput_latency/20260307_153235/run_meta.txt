@@ -1,0 +1,6 @@
+AGENT_RUNTIME=opencode
+CC_DATA_DIR=/home/sdu/liujinyao/cloudclaw/cloudclaw_data/data
+CC_DB_DRIVER=postgres
+POOL_SIZE=12
+LEVELS=10,20,50,100,200,500,1000
+INPUT_PREFIX=Reply with exactly OK and stop.

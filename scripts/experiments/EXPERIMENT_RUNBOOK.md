@@ -49,6 +49,14 @@ bash deploy/server/cloudclawctl.sh up
 # bash deploy/server/cloudclawctl.sh runner restart
 ```
 
+## 重启配置
+```
+rm -rf cloudclaw_data
+bash scripts/experiments/00_postgres_up.sh clean
+bash deploy/server/cloudclawctl.sh down
+bash deploy/server/cloudclawctl.sh up
+```
+
 ## 2) 实验一：吞吐与时延（并发 10~1000）
 
 ```bash
@@ -58,7 +66,7 @@ export AGENT_RUNTIME=opencode
 AGENT_RUNTIME=opencode \
 CC_DB_DRIVER=postgres \
 CC_DB_DSN="$CC_DB_DSN" \
-LEVELS=10,20,50,100,200,400,800,1000 \
+LEVELS=10,20,50,100,200 \
 TASKS_PER_USER=1 \
 SUBMIT_WORKERS_MAX=128 \
 POLL_INTERVAL=200ms \
@@ -78,15 +86,15 @@ export AGENT_RUNTIME=opencode
 AGENT_RUNTIME=opencode \
 CC_DB_DRIVER=postgres \
 CC_DB_DSN="$CC_DB_DSN" \
-CONCURRENCY_USERS=200 \
-TASKS_PER_USER=5 \
-SUBMIT_WORKERS=96 \
-POLL_INTERVAL=200ms \
-DEQUEUE_LIMIT=400 \
-MAX_RETRIES=4 \
-TIMEOUT=60m \
-INJECT_INTERVAL_SEC=8 \
-RUNNER_KILL_RATIO=20 \
+CONCURRENCY_USERS=20 \
+TASKS_PER_USER=2 \
+SUBMIT_WORKERS=12 \
+POLL_INTERVAL=500ms \
+DEQUEUE_LIMIT=100 \
+MAX_RETRIES=10 \
+TIMEOUT=45m \
+INJECT_INTERVAL_SEC=60 \
+RUNNER_KILL_RATIO=10 \
 RESTART_RUNNER_AFTER_KILL=1 \
 VERBOSE_TASKSIM=false \
 scripts/experiments/02_fault_injection.sh
@@ -109,15 +117,15 @@ AGENT_RUNTIME=opencode \
 CC_DB_DRIVER=postgres \
 CC_DB_DSN="$CC_DB_DSN" \
 ROUNDS=5 \
-CONCURRENCY_USERS=200 \
-TASKS_PER_USER=5 \
-SUBMIT_WORKERS=96 \
-POLL_INTERVAL=200ms \
-DEQUEUE_LIMIT=400 \
-MAX_RETRIES=4 \
+CONCURRENCY_USERS=20 \
+TASKS_PER_USER=2 \
+SUBMIT_WORKERS=12 \
+POLL_INTERVAL=500ms \
+DEQUEUE_LIMIT=100 \
+MAX_RETRIES=10 \
 TIMEOUT=60m \
-INJECT_INTERVAL_SEC=8 \
-RUNNER_KILL_RATIO=20 \
+INJECT_INTERVAL_SEC=60 \
+RUNNER_KILL_RATIO=10 \
 RESTART_RUNNER_AFTER_KILL=1 \
 POOL_LABEL=app=opencode-agent \
 scripts/experiments/04_retry_priority_gain.sh

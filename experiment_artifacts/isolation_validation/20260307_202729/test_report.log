@@ -1,0 +1,29 @@
+=== store isolation and safety tests ===
+=== RUN   TestUserDataIsolationAcrossUsersWithSameFilename
+--- PASS: TestUserDataIsolationAcrossUsersWithSameFilename (0.02s)
+=== RUN   TestReplaceUserDataRejectsSymlink
+--- PASS: TestReplaceUserDataRejectsSymlink (0.01s)
+=== RUN   TestIsSafeRelativePathRejectsTraversal
+--- PASS: TestIsSafeRelativePathRejectsTraversal (0.00s)
+=== RUN   TestReplaceUserDataRejectsOversizedFile
+--- PASS: TestReplaceUserDataRejectsOversizedFile (0.01s)
+=== RUN   TestReplaceUserDataRejectsOversizedTotal
+--- PASS: TestReplaceUserDataRejectsOversizedTotal (0.01s)
+PASS
+ok  	cloudclaw/internal/store	0.055s
+=== workspace isolation tests ===
+=== RUN   TestEphemeralModeCopiesUserRuntimeInAndOut
+--- PASS: TestEphemeralModeCopiesUserRuntimeInAndOut (0.00s)
+=== RUN   TestSafeUserRuntimeName
+--- PASS: TestSafeUserRuntimeName (0.00s)
+=== RUN   TestEphemeralPersistKeepsExistingRuntimeWhenRunStateMissing
+--- PASS: TestEphemeralPersistKeepsExistingRuntimeWhenRunStateMissing (0.00s)
+=== RUN   TestEphemeralModeCopiesClaudeRuntimeInAndOut
+--- PASS: TestEphemeralModeCopiesClaudeRuntimeInAndOut (0.00s)
+PASS
+ok  	cloudclaw/internal/workspace	0.004s
+=== mount boundary test ===
+=== RUN   TestLayoutForMountedWorkspaceRejectsOutsideHostBase
+--- PASS: TestLayoutForMountedWorkspaceRejectsOutsideHostBase (0.00s)
+PASS
+ok  	cloudclaw/internal/engine	0.003s
