@@ -25,6 +25,12 @@ Optional environment overrides:
 scripts/experiments/00_postgres_up.sh
 ```
 
+Reset (clean) local postgres data and recreate:
+
+```bash
+scripts/experiments/00_postgres_up.sh clean
+```
+
 The script prints `DB_DSN` export commands. After exporting them, restart runner:
 
 ```bash

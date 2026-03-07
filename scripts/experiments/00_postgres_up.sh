@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ACTION="${1:-up}"
 PG_CONTAINER_NAME="${PG_CONTAINER_NAME:-cloudclaw-pg}"
 PG_PORT="${PG_PORT:-15432}"
 PG_USER="${PG_USER:-cloudclaw}"
@@ -34,6 +35,24 @@ wait_pg_ready() {
 
 need_cmd docker
 
+if [[ "$ACTION" != "up" && "$ACTION" != "clean" ]]; then
+  die "usage: $0 [up|clean]"
+fi
+
+if [[ "$ACTION" == "clean" ]]; then
+  log "clean mode: recreate postgres container and volume"
+  if docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER_NAME"; then
+    log "stopping postgres container: $PG_CONTAINER_NAME"
+    docker stop "$PG_CONTAINER_NAME" >/dev/null
+  fi
+  if docker ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER_NAME"; then
+    log "removing postgres container: $PG_CONTAINER_NAME"
+    docker rm "$PG_CONTAINER_NAME" >/dev/null
+  fi
+  log "removing postgres volume: $PG_VOLUME"
+  docker volume rm "$PG_VOLUME" >/dev/null 2>&1 || true
+fi
+
 if docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER_NAME"; then
   log "postgres container already running: $PG_CONTAINER_NAME"
 elif docker ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER_NAME"; then
@@ -60,6 +79,7 @@ dsn="postgres://${PG_USER}:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/${PG_DB}?sslmode=
 
 cat <<EOF
 [pg-setup] postgres is ready
+[pg-setup] action: $ACTION
 [pg-setup] container: $PG_CONTAINER_NAME
 [pg-setup] dsn: $dsn
 

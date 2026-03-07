@@ -31,6 +31,9 @@ cd ~/liujinyao/cloudclaw
 # 启动本地 Postgres 容器（默认端口 15432）
 scripts/experiments/00_postgres_up.sh
 
+# 如需清空数据库后重建（危险操作）：
+# scripts/experiments/00_postgres_up.sh clean
+
 # 固定 CloudClaw 使用 Postgres
 export DB_DRIVER=postgres
 export DB_DSN='postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable'
