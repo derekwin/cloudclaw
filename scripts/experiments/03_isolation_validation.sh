@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 need_cmd "$GO_BIN"
+export CLOUDCLAW_TEST_POSTGRES_DSN="${CLOUDCLAW_TEST_POSTGRES_DSN:-$CC_DB_DSN}"
+if [[ -z "${CLOUDCLAW_TEST_POSTGRES_DSN// }" ]]; then
+  die "CLOUDCLAW_TEST_POSTGRES_DSN (or CC_DB_DSN/DB_DSN) is required"
+fi
 
 OUT_DIR="$(prepare_output_dir isolation_validation)"
 REPORT="$OUT_DIR/test_report.log"

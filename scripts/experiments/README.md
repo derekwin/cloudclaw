@@ -17,7 +17,7 @@ Optional environment overrides:
 - `RETRY_PRIORITY` (for runner restart experiments)
 - `INPUT_PREFIX` (default: `Reply with exactly OK and stop.`)
 
-## PostgreSQL for Experiments (Recommended)
+## PostgreSQL for Experiments (Required)
 
 ### Option A: start local postgres container
 
@@ -40,6 +40,11 @@ export CC_DB_DRIVER=postgres
 export CC_DB_DSN="$DB_DSN"
 AGENT_RUNTIME=opencode bash deploy/server/cloudclawctl.sh runner restart
 ```
+
+Notes:
+
+- `CC_DB_DRIVER` must be `postgres`.
+- `CC_DB_DSN` (or `DB_DSN`) is required.
 
 ### Stop local postgres container
 

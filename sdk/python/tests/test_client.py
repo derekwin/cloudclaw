@@ -16,7 +16,12 @@ class ClientTests(unittest.TestCase):
     @patch("cloudclaw.client.subprocess.run")
     def test_submit_task_builds_command(self, mock_run):
         mock_run.return_value = _Proc(stdout=json.dumps({"id": "tsk_1"}))
-        cli = Client(binary="cloudclaw", data_dir="/tmp/data", db_driver="sqlite")
+        cli = Client(
+            binary="cloudclaw",
+            data_dir="/tmp/data",
+            db_driver="postgres",
+            db_dsn="postgres://u:p@127.0.0.1:15432/cloudclaw?sslmode=disable",
+        )
 
         task = cli.submit_task("u1", "search", "hello", max_retries=3)
         self.assertEqual(task["id"], "tsk_1")
@@ -31,14 +36,14 @@ class ClientTests(unittest.TestCase):
     @patch("cloudclaw.client.subprocess.run")
     def test_run_json_raises_on_nonzero_exit(self, mock_run):
         mock_run.return_value = _Proc(returncode=1, stderr="boom")
-        cli = Client()
+        cli = Client(db_dsn="postgres://u:p@127.0.0.1:15432/cloudclaw?sslmode=disable")
         with self.assertRaises(CloudClawError):
             cli.get_queue_length()
 
     @patch("cloudclaw.client.subprocess.run")
     def test_run_json_raises_on_invalid_json(self, mock_run):
         mock_run.return_value = _Proc(stdout="not-json")
-        cli = Client()
+        cli = Client(db_dsn="postgres://u:p@127.0.0.1:15432/cloudclaw?sslmode=disable")
         with self.assertRaises(CloudClawError):
             cli.get_queue_length()
 

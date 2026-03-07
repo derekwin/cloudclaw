@@ -12,7 +12,6 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
 
 	"cloudclaw/internal/fsutil"
 	"cloudclaw/internal/model"
@@ -27,7 +26,7 @@ type SubmitTaskInput struct {
 
 type Config struct {
 	BaseDir               string
-	Driver                string // sqlite | postgres
+	Driver                string // postgres
 	DSN                   string
 	EventRetentionPerTask int
 	MaxUserDataBytes      int64
@@ -55,22 +54,13 @@ type dialect interface {
 	boolValue(v bool) any
 }
 
-type sqliteDialect struct{}
-
 type postgresDialect struct{}
 
-func (sqliteDialect) placeholder(i int) string { return "?" }
-func (sqliteDialect) boolValue(v bool) any {
-	if v {
-		return 1
-	}
-	return 0
-}
 func (postgresDialect) placeholder(i int) string { return fmt.Sprintf("$%d", i) }
 func (postgresDialect) boolValue(v bool) any     { return v }
 
 func New(baseDir string) (*Store, error) {
-	return NewWithConfig(Config{BaseDir: baseDir, Driver: "sqlite"})
+	return NewWithConfig(Config{BaseDir: baseDir, Driver: "postgres"})
 }
 
 func NewWithConfig(cfg Config) (*Store, error) {
@@ -78,7 +68,7 @@ func NewWithConfig(cfg Config) (*Store, error) {
 		return nil, errors.New("base dir is required")
 	}
 	if strings.TrimSpace(cfg.Driver) == "" {
-		cfg.Driver = "sqlite"
+		cfg.Driver = "postgres"
 	}
 	cfg.Driver = strings.ToLower(strings.TrimSpace(cfg.Driver))
 
@@ -106,16 +96,9 @@ func NewWithConfig(cfg Config) (*Store, error) {
 	}
 
 	var d dialect
-	sqlDriverName := cfg.Driver
+	sqlDriverName := "postgres"
 	dsn := strings.TrimSpace(cfg.DSN)
 	switch cfg.Driver {
-	case "sqlite":
-		d = sqliteDialect{}
-		sqlDriverName = "sqlite3"
-		if dsn == "" {
-			dbPath := filepath.Join(cfg.BaseDir, "cloudclaw.db")
-			dsn = fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_loc=UTC", dbPath)
-		}
 	case "postgres", "postgresql":
 		d = postgresDialect{}
 		cfg.Driver = "postgres"
@@ -123,7 +106,7 @@ func NewWithConfig(cfg Config) (*Store, error) {
 			return nil, errors.New("postgres dsn is required")
 		}
 	default:
-		return nil, fmt.Errorf("unsupported driver: %s", cfg.Driver)
+		return nil, fmt.Errorf("unsupported driver: %s (only postgres is supported)", cfg.Driver)
 	}
 
 	db, err := sql.Open(sqlDriverName, dsn)
@@ -1220,7 +1203,7 @@ func (s *Store) ensureSchema() error {
   user_id TEXT NOT NULL,
   path TEXT NOT NULL,
   mode INTEGER NOT NULL,
-  content BLOB NOT NULL,
+  content BYTEA NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   PRIMARY KEY (user_id, path)
 )`,
@@ -1486,30 +1469,6 @@ func (s *Store) ensureTableColumn(tableName, columnName, columnDef string) error
 
 func (s *Store) hasColumn(tableName, columnName string) (bool, error) {
 	switch s.driver {
-	case "sqlite":
-		query := fmt.Sprintf("PRAGMA table_info(%s)", quoteIdentifier(tableName))
-		rows, err := s.db.Query(query)
-		if err != nil {
-			return false, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var (
-				cid        int
-				name       string
-				colType    string
-				notnull    int
-				defaultV   sql.NullString
-				primaryKey int
-			)
-			if err := rows.Scan(&cid, &name, &colType, &notnull, &defaultV, &primaryKey); err != nil {
-				return false, err
-			}
-			if strings.EqualFold(name, columnName) {
-				return true, nil
-			}
-		}
-		return false, rows.Err()
 	case "postgres":
 		var exists bool
 		err := s.db.QueryRow(
@@ -1579,8 +1538,7 @@ func (s *Store) updateCancelRequestedSQL() string {
 }
 
 func (s *Store) dequeueUpdateSQL() string {
-	if s.driver == "postgres" {
-		return `
+	return `
 UPDATE tasks
 SET status = ` + s.ph(1) + `,
     attempts = attempts + 1,
@@ -1600,31 +1558,6 @@ WHERE id = (
     ORDER BY q.priority ASC, q.enqueued_at ASC, q.created_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
-)
-RETURNING id, user_id, task_type, input, priority, status, attempts, max_retries, container_id,
-          lease_until, error_message, cancel_requested, created_at, enqueued_at, updated_at,
-          started_at, finished_at, last_heartbeat_at, usage_prompt_tokens, usage_completion_tokens,
-          usage_total_tokens`
-	}
-	return `
-UPDATE tasks
-SET status = ` + s.ph(1) + `,
-    attempts = attempts + 1,
-    container_id = ` + s.ph(2) + `,
-    updated_at = ` + s.ph(3) + `,
-    cancel_requested = 0,
-    started_at = COALESCE(started_at, ` + s.ph(4) + `),
-    lease_until = ` + s.ph(5) + `,
-    last_heartbeat_at = ` + s.ph(6) + `
-WHERE id = (
-    SELECT id FROM tasks q
-    WHERE q.status = ` + s.ph(7) + `
-      AND NOT EXISTS (
-        SELECT 1 FROM tasks r
-        WHERE r.user_id = q.user_id AND r.status = ` + s.ph(8) + `
-      )
-    ORDER BY q.priority ASC, q.enqueued_at ASC, q.created_at ASC
-    LIMIT 1
 )
 RETURNING id, user_id, task_type, input, priority, status, attempts, max_retries, container_id,
           lease_until, error_message, cancel_requested, created_at, enqueued_at, updated_at,
@@ -1707,16 +1640,10 @@ WHERE id=` + s.ph(7)
 }
 
 func (s *Store) upsertSnapshotSQL() string {
-	if s.driver == "postgres" {
-		return `INSERT INTO snapshots (user_id, id, task_id, path, created_at)
+	return `INSERT INTO snapshots (user_id, id, task_id, path, created_at)
 VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `)
 ON CONFLICT (user_id)
 DO UPDATE SET id=EXCLUDED.id, task_id=EXCLUDED.task_id, path=EXCLUDED.path, created_at=EXCLUDED.created_at`
-	}
-	return `INSERT INTO snapshots (user_id, id, task_id, path, created_at)
-VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `)
-ON CONFLICT(user_id)
-DO UPDATE SET id=excluded.id, task_id=excluded.task_id, path=excluded.path, created_at=excluded.created_at`
 }
 
 func (s *Store) selectSnapshotSQL() string {
@@ -1724,16 +1651,10 @@ func (s *Store) selectSnapshotSQL() string {
 }
 
 func (s *Store) upsertContainerSQL() string {
-	if s.driver == "postgres" {
-		return `INSERT INTO containers (id, state, task_id, updated_at)
+	return `INSERT INTO containers (id, state, task_id, updated_at)
 VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `)
 ON CONFLICT (id)
 DO UPDATE SET state=EXCLUDED.state, task_id=EXCLUDED.task_id, updated_at=EXCLUDED.updated_at`
-	}
-	return `INSERT INTO containers (id, state, task_id, updated_at)
-VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `)
-ON CONFLICT(id)
-DO UPDATE SET state=excluded.state, task_id=excluded.task_id, updated_at=excluded.updated_at`
 }
 
 func (s *Store) selectContainersSQL() string {
@@ -1748,18 +1669,11 @@ func (s *Store) selectEventsSQL(withTask bool) string {
 }
 
 func (s *Store) insertTaskResultSQL() string {
-	if s.driver == "postgres" {
-		return `INSERT INTO task_results (
-id, task_id, user_id, task_type, container_id, status, error_message, output,
-usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
-) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `, ` + s.ph(13) + `)
-ON CONFLICT (task_id) DO NOTHING`
-	}
 	return `INSERT INTO task_results (
 id, task_id, user_id, task_type, container_id, status, error_message, output,
 usage_prompt_tokens, usage_completion_tokens, usage_total_tokens, created_at, delivered_at
 ) VALUES (` + s.ph(1) + `, ` + s.ph(2) + `, ` + s.ph(3) + `, ` + s.ph(4) + `, ` + s.ph(5) + `, ` + s.ph(6) + `, ` + s.ph(7) + `, ` + s.ph(8) + `, ` + s.ph(9) + `, ` + s.ph(10) + `, ` + s.ph(11) + `, ` + s.ph(12) + `, ` + s.ph(13) + `)
-ON CONFLICT(task_id) DO NOTHING`
+ON CONFLICT (task_id) DO NOTHING`
 }
 
 func (s *Store) selectPendingTaskResultsSQL() string {
@@ -1783,21 +1697,12 @@ func (s *Store) markTaskResultDeliveredSQL() string {
 }
 
 func (s *Store) pruneTaskEventsSQL() string {
-	if s.driver == "postgres" {
-		return `DELETE FROM task_events
-WHERE id IN (
-  SELECT id FROM task_events
-  WHERE task_id=` + s.ph(1) + `
-  ORDER BY at DESC, id DESC
-  OFFSET ` + s.ph(2) + `
-)`
-	}
 	return `DELETE FROM task_events
 WHERE id IN (
   SELECT id FROM task_events
   WHERE task_id=` + s.ph(1) + `
   ORDER BY at DESC, id DESC
-  LIMIT -1 OFFSET ` + s.ph(2) + `
+  OFFSET ` + s.ph(2) + `
 )`
 }
 

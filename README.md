@@ -19,10 +19,10 @@ vim ./cloudclaw_data/shared/opencode/opencode.json
 bash deploy/server/cloudclawctl.sh up
 ```
 
-## 数据库配置（SQLite / PostgreSQL）
+## 数据库配置（PostgreSQL）
 
-- 默认数据库：`sqlite`（文件位置：`./cloudclaw_data/data/cloudclaw.db`）
-- 可切换到 PostgreSQL：通过环境变量 `DB_DRIVER=postgres`、`DB_DSN=<dsn>`
+- CloudClaw 仅支持 PostgreSQL。
+- 通过环境变量 `DB_DRIVER=postgres`、`DB_DSN=<dsn>` 配置数据库连接。
 
 ### PostgreSQL（推荐用于高并发实验）
 
@@ -45,15 +45,6 @@ export CC_DB_DSN="$DB_DSN"
 
 ```bash
 export AGENT_RUNTIME=opencode
-bash deploy/server/cloudclawctl.sh runner restart
-```
-
-4) 回退 SQLite（可选）
-
-```bash
-unset DB_DSN CC_DB_DSN
-export DB_DRIVER=sqlite
-export CC_DB_DRIVER=sqlite
 bash deploy/server/cloudclawctl.sh runner restart
 ```
 
@@ -148,8 +139,8 @@ bash deploy/server/cloudclawctl.sh result get <task_id>
 
 - `AGENT_RUNTIME` 必填（`opencode` / `openclaw` / `claudecode`）
 - `CC_HOME` 默认 `./cloudclaw_data`
-- `DB_DRIVER` 默认 `sqlite`（可设为 `postgres`）
-- `DB_DSN` 默认空（`sqlite` 时自动使用 `cloudclaw.db`；`postgres` 时必填）
+- `DB_DRIVER` 默认 `postgres`
+- `DB_DSN` 必填（示例：`postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable`）
 - `up` 实际执行：`install` +（配置缺失时）`init` + `pool start` + `runner start`
 - 运行模式默认（opencode + openclaw + claudecode）：
   - `WORKSPACE_STATE_MODE=ephemeral`
@@ -158,19 +149,6 @@ bash deploy/server/cloudclawctl.sh result get <task_id>
 ## 批量任务测试
 
 ```
-go run ./cmd/tasksim \
-  --data-dir ./cloudclaw_data/data \
-  --db-driver sqlite \
-  --users sim_u1,sim_u2,sim_u3 \
-  --tasks-per-user 5 \
-  --submit-workers 4 \
-  --poll-interval 1s \
-  --dequeue-limit 20
-```
-
-PostgreSQL 示例：
-
-```bash
 go run ./cmd/tasksim \
   --data-dir ./cloudclaw_data/data \
   --db-driver postgres \
@@ -189,7 +167,8 @@ go run ./cmd/tasksim \
 ```bash
 go run ./cmd/tasksim \
   --data-dir ./cloudclaw_data/data \
-  --db-driver sqlite \
+  --db-driver postgres \
+  --db-dsn 'postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable' \
   --users sim_u1,sim_u2,sim_u3 \
   --tasks-per-user 5 \
   --submit-workers 4 \

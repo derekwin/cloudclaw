@@ -583,7 +583,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver sqlite --executor k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver postgres --db-dsn <postgres-dsn> --executor k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
@@ -598,13 +598,31 @@ func usage() {
 
 func bindCommonStoreFlags(fs *flag.FlagSet) commonStoreFlags {
 	dataDir := fs.String("data-dir", "./cloudclaw_data/data", "cloudclaw data directory")
-	dbDriver := fs.String("db-driver", "sqlite", "database driver: sqlite|postgres")
-	dbDSN := fs.String("db-dsn", "", "database dsn; sqlite default is <data-dir>/cloudclaw.db")
+	dbDriver := fs.String("db-driver", "postgres", "database driver: postgres")
+	dbDSN := fs.String("db-dsn", "", "database dsn (required): postgres://user:pass@host:port/db?sslmode=disable")
 	return commonStoreFlags{
 		dataDir:  dataDir,
 		dbDriver: dbDriver,
 		dbDSN:    dbDSN,
 	}
+}
+
+func validateCommonStoreFlags(sf commonStoreFlags) error {
+	driver := strings.ToLower(strings.TrimSpace(*sf.dbDriver))
+	if driver == "" {
+		driver = "postgres"
+	}
+	if driver == "postgresql" {
+		driver = "postgres"
+	}
+	if driver != "postgres" {
+		return fmt.Errorf("unsupported db-driver %q: only postgres is supported", *sf.dbDriver)
+	}
+	if strings.TrimSpace(*sf.dbDSN) == "" {
+		return fmt.Errorf("db-dsn is required when db-driver=postgres")
+	}
+	*sf.dbDriver = driver
+	return nil
 }
 
 type portsPool interface {
@@ -614,6 +632,9 @@ type portsPool interface {
 }
 
 func withClient(sf commonStoreFlags, fn func(*cloudclaw.Client) error) error {
+	if err := validateCommonStoreFlags(sf); err != nil {
+		return err
+	}
 	cli, err := cloudclaw.NewClient(cloudclaw.Config{
 		DataDir:  *sf.dataDir,
 		DBDriver: *sf.dbDriver,
@@ -627,6 +648,9 @@ func withClient(sf commonStoreFlags, fn func(*cloudclaw.Client) error) error {
 }
 
 func withStore(sf commonStoreFlags, fn func(*store.Store) error) error {
+	if err := validateCommonStoreFlags(sf); err != nil {
+		return err
+	}
 	s, err := store.NewWithConfig(store.Config{
 		BaseDir: *sf.dataDir,
 		Driver:  *sf.dbDriver,

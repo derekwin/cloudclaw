@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -12,7 +13,7 @@ class CloudClawError(RuntimeError):
 class Client:
     binary: str = "cloudclaw"
     data_dir: str = "./cloudclaw_data/data"
-    db_driver: str = "sqlite"
+    db_driver: str = "postgres"
     db_dsn: str = ""
 
     def submit_task(self, user_id: str, task_type: str, input_text: str, max_retries: int = 2) -> Dict[str, Any]:
@@ -50,16 +51,25 @@ class Client:
         return self._run_json(args)
 
     def _run_json(self, subcmd: List[str]) -> Any:
+        driver = (self.db_driver or "postgres").strip().lower()
+        if driver == "postgresql":
+            driver = "postgres"
+        if driver != "postgres":
+            raise CloudClawError(f"unsupported db_driver: {self.db_driver} (only postgres is supported)")
+        dsn = (self.db_dsn or os.environ.get("DB_DSN", "")).strip()
+        if not dsn:
+            raise CloudClawError("db_dsn is required when db_driver=postgres")
+
         args = [
             self.binary,
             *subcmd,
             "--data-dir",
             self.data_dir,
             "--db-driver",
-            self.db_driver,
+            driver,
+            "--db-dsn",
+            dsn,
         ]
-        if self.db_dsn:
-            args.extend(["--db-dsn", self.db_dsn])
 
         proc = subprocess.run(args, capture_output=True, text=True)
         if proc.returncode != 0:

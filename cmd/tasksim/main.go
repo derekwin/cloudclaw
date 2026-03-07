@@ -325,8 +325,8 @@ func parseFlags() config {
 	var usersCSV string
 	cfg := config{}
 	flag.StringVar(&cfg.dataDir, "data-dir", "./cloudclaw_data/data", "cloudclaw data directory")
-	flag.StringVar(&cfg.dbDriver, "db-driver", "sqlite", "database driver: sqlite|postgres")
-	flag.StringVar(&cfg.dbDSN, "db-dsn", "", "database dsn")
+	flag.StringVar(&cfg.dbDriver, "db-driver", "postgres", "database driver: postgres")
+	flag.StringVar(&cfg.dbDSN, "db-dsn", "", "database dsn (required): postgres://user:pass@host:port/db?sslmode=disable")
 	flag.StringVar(&usersCSV, "users", "sim_u1,sim_u2", "comma-separated user ids")
 	flag.IntVar(&cfg.tasksPerUser, "tasks-per-user", 5, "number of tasks per user")
 	flag.IntVar(&cfg.submitWorkers, "submit-workers", 4, "number of concurrent submit workers")
@@ -359,6 +359,19 @@ func parseFlags() config {
 	}
 	if cfg.pollInterval <= 0 {
 		log.Fatal("poll-interval must be > 0")
+	}
+	cfg.dbDriver = strings.ToLower(strings.TrimSpace(cfg.dbDriver))
+	if cfg.dbDriver == "" {
+		cfg.dbDriver = "postgres"
+	}
+	if cfg.dbDriver == "postgresql" {
+		cfg.dbDriver = "postgres"
+	}
+	if cfg.dbDriver != "postgres" {
+		log.Fatalf("unsupported db-driver=%q: only postgres is supported", cfg.dbDriver)
+	}
+	if strings.TrimSpace(cfg.dbDSN) == "" {
+		log.Fatal("db-dsn is required when db-driver=postgres")
 	}
 	if strings.TrimSpace(cfg.taskTypePrefix) == "" {
 		log.Fatal("task-type-prefix cannot be empty")
