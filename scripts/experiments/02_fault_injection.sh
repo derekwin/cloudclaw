@@ -17,6 +17,7 @@ DEQUEUE_LIMIT="${DEQUEUE_LIMIT:-200}"
 TIMEOUT="${TIMEOUT:-45m}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 VERBOSE_TASKSIM="${VERBOSE_TASKSIM:-false}"
+INPUT_PREFIX="${INPUT_PREFIX:-Reply with exactly OK and stop.}"
 
 INJECT_INTERVAL_SEC="${INJECT_INTERVAL_SEC:-5}"
 RUNNER_KILL_RATIO="${RUNNER_KILL_RATIO:-30}"
@@ -37,6 +38,7 @@ echo "CONCURRENCY_USERS=$CONCURRENCY_USERS" >> "$RUN_META"
 echo "TASKS_PER_USER=$TASKS_PER_USER" >> "$RUN_META"
 echo "INJECT_INTERVAL_SEC=$INJECT_INTERVAL_SEC" >> "$RUN_META"
 echo "RUNNER_KILL_RATIO=$RUNNER_KILL_RATIO" >> "$RUN_META"
+echo "INPUT_PREFIX=$INPUT_PREFIX" >> "$RUN_META"
 
 log "fault injection experiment started"
 log "output dir: $OUT_DIR"
@@ -125,6 +127,7 @@ run_tasksim \
   --poll-interval "$POLL_INTERVAL" \
   --timeout "$TIMEOUT" \
   --max-retries "$MAX_RETRIES" \
+  --input-prefix "$INPUT_PREFIX" \
   --task-type "$task_type" \
   --summary-file "$SUMMARY_JSON" \
   --append-csv "$SUMMARY_CSV" \

@@ -16,6 +16,7 @@ DEQUEUE_LIMIT="${DEQUEUE_LIMIT:-200}"
 TIMEOUT="${TIMEOUT:-30m}"
 MAX_RETRIES="${MAX_RETRIES:-2}"
 VERBOSE_TASKSIM="${VERBOSE_TASKSIM:-false}"
+INPUT_PREFIX="${INPUT_PREFIX:-Reply with exactly OK and stop.}"
 
 OUT_DIR="$(prepare_output_dir throughput_latency)"
 SUMMARY_CSV="$OUT_DIR/summary.csv"
@@ -26,6 +27,7 @@ echo "CC_DATA_DIR=$CC_DATA_DIR" >> "$RUN_META"
 echo "CC_DB_DRIVER=$CC_DB_DRIVER" >> "$RUN_META"
 echo "POOL_SIZE=${POOL_SIZE:-}" >> "$RUN_META"
 echo "LEVELS=$LEVELS" >> "$RUN_META"
+echo "INPUT_PREFIX=$INPUT_PREFIX" >> "$RUN_META"
 
 log "throughput/latency experiment started"
 log "output dir: $OUT_DIR"
@@ -57,6 +59,7 @@ for level in "${levels[@]}"; do
     --poll-interval "$POLL_INTERVAL" \
     --timeout "$TIMEOUT" \
     --max-retries "$MAX_RETRIES" \
+    --input-prefix "$INPUT_PREFIX" \
     --task-type "$task_type" \
     --summary-file "$summary_json" \
     --append-csv "$SUMMARY_CSV" \
