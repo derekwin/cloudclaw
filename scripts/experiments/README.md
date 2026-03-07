@@ -3,7 +3,7 @@
 ## Prerequisites
 
 1. Runner and pool are already up on target server.
-2. `AGENT_RUNTIME` is set (`opencode` or `claudecode`).
+2. `AGENT_RUNTIME` is set (`opencode` / `openclaw` / `claudecode`).
 3. `go` and `docker` are installed.
 
 Optional environment overrides:
@@ -12,6 +12,38 @@ Optional environment overrides:
 - `OUT_BASE_DIR` (default: `./experiment_artifacts`)
 - `RETRY_PRIORITY` (for runner restart experiments)
 - `INPUT_PREFIX` (default: `Reply with exactly OK and stop.`)
+
+## PostgreSQL for Experiments (Recommended)
+
+### Option A: start local postgres container
+
+```bash
+scripts/experiments/00_postgres_up.sh
+```
+
+The script prints `DB_DSN` export commands. After exporting them, restart runner:
+
+```bash
+AGENT_RUNTIME=opencode bash deploy/server/cloudclawctl.sh runner restart
+```
+
+### Option B: use your own postgres instance
+
+```bash
+export DB_DRIVER=postgres
+export DB_DSN='postgres://<user>:<pass>@<host>:<port>/<db>?sslmode=disable'
+export CC_DB_DRIVER=postgres
+export CC_DB_DSN="$DB_DSN"
+AGENT_RUNTIME=opencode bash deploy/server/cloudclawctl.sh runner restart
+```
+
+### Stop local postgres container
+
+```bash
+scripts/experiments/00_postgres_down.sh
+# remove data volume as well:
+# REMOVE_DATA=1 scripts/experiments/00_postgres_down.sh
+```
 
 ## 1) Throughput and latency
 
@@ -82,71 +114,3 @@ Output:
 
 - `compare.csv` (raw per-round metrics)
 - `compare.txt` (aggregated comparison)
-
-# 测试
-
-统一基线（先执行）
-
-cd cloudclaw
-
-export AGENT_RUNTIME=opencode
-export POOL_SIZE=12
-export WORKSPACE_STATE_MODE=ephemeral
-export WORKSPACE_MODE=mount
-export CONTAINER_HARDEN=1
-export CONTAINER_PIDS_LIMIT=256
-export CONTAINER_NETWORK=host
-
-bash deploy/server/cloudclawctl.sh init
-bash deploy/server/cloudclawctl.sh up
-bash deploy/server/cloudclawctl.sh restart
-
-1) 吞吐与时延（6.2-1）
-
-AGENT_RUNTIME=opencode \
-LEVELS=10,20,50,100,200,400,800,1000 \
-TASKS_PER_USER=1 \
-SUBMIT_WORKERS_MAX=128 \
-POLL_INTERVAL=200ms \
-DEQUEUE_LIMIT=400 \
-MAX_RETRIES=0 \
-TIMEOUT=45m \
-VERBOSE_TASKSIM=false \
-scripts/experiments/01_throughput_latency.sh
-
-2) 故障注入（6.2-2）
-
-AGENT_RUNTIME=opencode \
-CONCURRENCY_USERS=200 \
-TASKS_PER_USER=5 \
-SUBMIT_WORKERS=96 \
-POLL_INTERVAL=200ms \
-DEQUEUE_LIMIT=400 \
-MAX_RETRIES=4 \
-TIMEOUT=60m \
-INJECT_INTERVAL_SEC=8 \
-RUNNER_KILL_RATIO=20 \
-RESTART_RUNNER_AFTER_KILL=1 \
-VERBOSE_TASKSIM=false \
-scripts/experiments/02_fault_injection.sh
-3) 隔离验证（6.2-3）
-
-scripts/experiments/03_isolation_validation.sh
-建议连跑 3 次取一致性。
-
-4) 重试优先级收益（6.2-4）
-
-AGENT_RUNTIME=opencode \
-ROUNDS=5 \
-CONCURRENCY_USERS=200 \
-TASKS_PER_USER=5 \
-SUBMIT_WORKERS=96 \
-POLL_INTERVAL=200ms \
-DEQUEUE_LIMIT=400 \
-MAX_RETRIES=4 \
-TIMEOUT=60m \
-INJECT_INTERVAL_SEC=8 \
-RUNNER_KILL_RATIO=20 \
-RESTART_RUNNER_AFTER_KILL=1 \
-POOL_LABEL=app=opencode-agent \
-scripts/experiments/04_retry_priority_gain.sh

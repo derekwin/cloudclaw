@@ -19,3 +19,16 @@ task = client.submit_task(user_id="u1", task_type="search", input_text="hello")
 status = client.get_task_status(task["id"])
 print(status["status"])
 ```
+
+Use PostgreSQL:
+
+```python
+from cloudclaw import Client
+
+client = Client(
+    binary="cloudclaw",
+    data_dir="./cloudclaw_data/data",
+    db_driver="postgres",
+    db_dsn="postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable",
+)
+```
