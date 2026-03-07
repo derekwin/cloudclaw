@@ -1,5 +1,9 @@
 # CloudClaw Experiment Scripts
 
+按顺序完整执行命令见：
+
+- `scripts/experiments/EXPERIMENT_RUNBOOK.md`
+
 ## Prerequisites
 
 1. Runner and pool are already up on target server.
