@@ -1021,7 +1021,7 @@ Usage:
 Groups:
   home   set <path> | show
   config path | show | edit | import <file> | reset | init-full | help
-  task   status <task_id> | events <task_id> | trace <task_id> | summary [limit]
+  task   status <task_id> | events <task_id> | trace <task_id> | watch <task_id> [interval_sec] | summary [limit]
   result dequeue [limit]
          get <task_id>
   db     prune-opencode-runtime
@@ -1055,6 +1055,7 @@ Examples:
   AGENT_RUNTIME=opencode $0 smoke
   AGENT_RUNTIME=openclaw $0 smoke
   AGENT_RUNTIME=opencode $0 task trace tsk_xxx
+  AGENT_RUNTIME=opencode $0 task watch tsk_xxx 1
 
 Environment overrides:
   AGENT_RUNTIME (required: opencode|openclaw|claudecode)
@@ -1162,9 +1163,24 @@ cmd_db() {
   esac
 }
 
+task_status_json() {
+  local task_id="$1"
+  cmd=(
+    "$CLOUDCLAW_BIN" task status
+    --data-dir "$DATA_DIR"
+    --db-driver "$DB_DRIVER"
+    --task-id "$task_id"
+  )
+  if [ -n "$DB_DSN" ]; then
+    cmd+=(--db-dsn "$DB_DSN")
+  fi
+  "${cmd[@]}"
+}
+
 cmd_task() {
   local action="${1:-}"
   local task_id="${2:-}"
+  local arg3="${3:-}"
   local limit="${2:-8}"
   ensure_dirs
   if [ ! -x "$CLOUDCLAW_BIN" ]; then
@@ -1173,16 +1189,7 @@ cmd_task() {
   case "$action" in
     status)
       require_arg "<task_id>" "$task_id"
-      cmd=(
-        "$CLOUDCLAW_BIN" task status
-        --data-dir "$DATA_DIR"
-        --db-driver "$DB_DRIVER"
-        --task-id "$task_id"
-      )
-      if [ -n "$DB_DSN" ]; then
-        cmd+=(--db-dsn "$DB_DSN")
-      fi
-      "${cmd[@]}"
+      task_status_json "$task_id"
       ;;
     events)
       require_arg "<task_id>" "$task_id"
@@ -1208,6 +1215,71 @@ cmd_task() {
       echo "# task result"
       cmd_result get "$task_id"
       ;;
+    watch)
+      require_arg "<task_id>" "$task_id"
+      local interval="${arg3:-2}"
+      case "$interval" in
+        ''|*[!0-9]*)
+          die "interval_sec must be a positive integer"
+          ;;
+      esac
+      if [ "$interval" -le 0 ]; then
+        die "interval_sec must be > 0"
+      fi
+
+      local last_attempt=""
+      local last_status=""
+      local file_offset=0
+      while true; do
+        local status_json status attempts container_id updated_at run_dir result_file size start
+        status_json="$(task_status_json "$task_id")"
+        status="$(printf '%s' "$status_json" | sed -n 's/.*"status": "\([^"]*\)".*/\1/p' | head -n1)"
+        attempts="$(printf '%s' "$status_json" | sed -n 's/.*"attempts": \([0-9][0-9]*\).*/\1/p' | head -n1)"
+        container_id="$(printf '%s' "$status_json" | sed -n 's/.*"container_id": "\([^"]*\)".*/\1/p' | head -n1)"
+        updated_at="$(printf '%s' "$status_json" | sed -n 's/.*"updated_at": "\([^"]*\)".*/\1/p' | head -n1)"
+
+        if [ -z "$attempts" ]; then
+          attempts=0
+        fi
+
+        if [ "$attempts" != "$last_attempt" ]; then
+          file_offset=0
+          last_attempt="$attempts"
+          printf '[cloudclawctl] task watch attempt=%s status=%s container=%s updated_at=%s\n' "$attempts" "${status:-unknown}" "${container_id:-}" "${updated_at:-}"
+        elif [ "$status" != "$last_status" ]; then
+          printf '[cloudclawctl] task watch status=%s attempt=%s container=%s updated_at=%s\n' "${status:-unknown}" "$attempts" "${container_id:-}" "${updated_at:-}"
+        fi
+        last_status="$status"
+
+        run_dir="$DATA_DIR/runs/${task_id}-attempt-${attempts}"
+        result_file="$run_dir/result.txt"
+        if [ -f "$result_file" ]; then
+          size="$(wc -c < "$result_file" | tr -d ' ')"
+          if [ -z "$size" ]; then
+            size=0
+          fi
+          if [ "$size" -lt "$file_offset" ]; then
+            file_offset=0
+          fi
+          if [ "$size" -gt "$file_offset" ]; then
+            start=$((file_offset + 1))
+            tail -c "+$start" "$result_file" || true
+            file_offset="$size"
+          fi
+        fi
+
+        if [ "$status" = "SUCCEEDED" ] || [ "$status" = "FAILED" ] || [ "$status" = "CANCELED" ]; then
+          echo
+          echo "# final task status"
+          printf '%s\n' "$status_json"
+          echo
+          echo "# final task result"
+          cmd_result get "$task_id" || true
+          break
+        fi
+        sleep "$interval"
+      done
+      ;;
     summary)
       cmd=(
         "$CLOUDCLAW_BIN" task summary
@@ -1223,7 +1295,7 @@ cmd_task() {
       "${cmd[@]}"
       ;;
     *)
-      die "unknown task action: $action (use: status <task_id>|events <task_id>|trace <task_id>|summary [limit])"
+      die "unknown task action: $action (use: status <task_id>|events <task_id>|trace <task_id>|watch <task_id> [interval_sec]|summary [limit])"
       ;;
   esac
 }
@@ -1322,6 +1394,7 @@ cmd_shortcut() {
     task-status) cmd_task status "$arg1" ;;
     task-events) cmd_task events "$arg1" ;;
     task-trace) cmd_task trace "$arg1" ;;
+    task-watch) cmd_task watch "$arg1" "${arg2:-2}" ;;
     help|--help|-h|"") usage ;;
     # legacy aliases
     set-home) set_home "$arg1" ;;
@@ -1347,16 +1420,17 @@ main() {
   local group="${1:-help}"
   local action="${2:-}"
   local arg="${3:-}"
+  local arg2="${4:-}"
   case "$group" in
     home) cmd_home "$action" "$arg" ;;
     config) cmd_config "$action" "$arg" ;;
-    task) cmd_task "$action" "$arg" ;;
+    task) cmd_task "$action" "$arg" "$arg2" ;;
     result) cmd_result "$action" "$arg" ;;
     db) cmd_db "$action" ;;
     pool) cmd_pool "$action" ;;
     runner) cmd_runner "$action" "$arg" ;;
-    *) cmd_shortcut "$group" "$action" "$arg" ;;
+    *) cmd_shortcut "$group" "$action" "$arg" "$arg2" ;;
   esac
 }
 
-main "${1:-}" "${2:-}" "${3:-}"
+main "${1:-}" "${2:-}" "${3:-}" "${4:-}"

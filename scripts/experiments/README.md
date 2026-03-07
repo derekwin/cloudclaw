@@ -11,6 +11,7 @@ Optional environment overrides:
 - `CC_DATA_DIR`, `CC_DB_DRIVER`, `CC_DB_DSN`
 - `OUT_BASE_DIR` (default: `./experiment_artifacts`)
 - `RETRY_PRIORITY` (for runner restart experiments)
+- `INPUT_PREFIX` (default: `Reply with exactly OK and stop.`)
 
 ## 1) Throughput and latency
 
