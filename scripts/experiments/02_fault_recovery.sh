@@ -33,7 +33,7 @@ FAULT_DELAY_SECONDS="${CC_EXP_FAULT_DELAY_SECONDS:-10}"
 FAULT_INTERVAL_SECONDS="${CC_EXP_FAULT_INTERVAL_SECONDS:-15}"
 FAULT_DOWN_SECONDS="${CC_EXP_FAULT_DOWN_SECONDS:-8}"
 FAULT_COUNT="${CC_EXP_FAULT_COUNT:-1}"
-INPUT_PREFIX="${CC_EXP_INPUT_PREFIX:-fault recovery benchmark task with a detailed structured answer}"
+INPUT_PREFIX="${CC_EXP_INPUT_PREFIX:-Without using any tools, shell commands, file reads, file writes, or network access, write 120 numbered one-line items about system resilience and stop after item 120.}"
 
 read -r -a FAULT_MODES <<<"$FAULT_MODES_STR"
 read -r -a RETRY_PRIORITIES <<<"$RETRY_PRIORITIES_STR"
@@ -111,6 +111,7 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
           --max-retries "$MAX_RETRIES" \
           --task-type "$task_type" \
           --input-prefix "$INPUT_PREFIX" \
+          --raw-input=true \
           --summary-file "$summary_file" \
           --append-csv "$ARTIFACT_ROOT/tasksim_summary.csv" \
           --fetch-final-task=true \
@@ -152,6 +153,7 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
   "poll_interval": $(json_quote "$POLL_INTERVAL"),
   "timeout": $(json_quote "$TIMEOUT"),
   "max_retries": $MAX_RETRIES,
+  "raw_input": true,
   "fault_delay_seconds": $FAULT_DELAY_SECONDS,
   "fault_interval_seconds": $FAULT_INTERVAL_SECONDS,
   "fault_down_seconds": $FAULT_DOWN_SECONDS,

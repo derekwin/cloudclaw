@@ -19,6 +19,7 @@ By default, every experiment run now performs a fresh setup step:
 - reset the CloudClaw tables in the database pointed to by `DB_DSN`
 - clear local `data/runs` and `user-runtime` state under the current `CC_HOME`
 - run `cloudclawctl smoke` before the actual workload and store its output in the artifact directory
+- terminate stray `cloudclaw run` processes that are still connected to the same `DB_DSN`
 
 You can disable these with:
 
@@ -27,6 +28,7 @@ export CC_EXP_AUTO_INIT_RUNTIME=0
 export CC_EXP_AUTO_RESET_DB=0
 export CC_EXP_AUTO_CLEAN_STATE=0
 export CC_EXP_SMOKE_BEFORE_RUN=0
+export CC_EXP_FORCE_KILL_STRAY_RUNNERS=0
 ```
 
 ## Layout
@@ -53,9 +55,13 @@ export CC_EXP_USERS="sim_u1,sim_u2,sim_u3,sim_u4"
 export CC_EXP_TASKS_PER_USER_LIST="5 10 20 40"
 export CC_EXP_WORKSPACE_MODES="mount copy"
 export CC_EXP_REPEAT=3
+export CC_EXP_INPUT_PREFIX="Without using any tools, reply with exactly one line: CLOUDCLAW_OK"
 
 bash scripts/experiments/01_throughput_latency.sh
 ```
+
+The experiment scripts submit this prompt as raw task input, so benchmark tasks will not have
+`worker=... user=... idx=...` appended by `tasksim`.
 
 ## 2. Fault Recovery
 
@@ -69,8 +75,7 @@ export CC_EXP_FAULT_MODES="runner container"
 export CC_EXP_RETRY_PRIORITIES="0 1"
 export CC_EXP_TASKS_PER_USER=12
 export CC_EXP_REPEAT=3
-bash scripts/experiments/02_fault_recovery.sh
-
+export CC_EXP_INPUT_PREFIX="Without using any tools, write 120 numbered one-line items about system resilience."
 bash scripts/experiments/02_fault_recovery.sh
 ```
 
@@ -95,12 +100,4 @@ python3 scripts/experiments/plot_results.py \
   --output-dir ./experiment_artifacts/plots
 ```
 
-If you only want one figure family:
-
-```bash
-python3 scripts/experiments/plot_results.py --experiment throughput
-python3 scripts/experiments/plot_results.py --experiment fault
-python3 scripts/experiments/plot_results.py --experiment isolation
-```
-
-`plot_results.py` uses `matplotlib` for PNG figures. If your server environment does not have it, install it first or run the plotting step locally after copying the artifact directory.
+`plot_results.py` now renders self-contained SVG figures and CSV summaries, so it does not require `matplotlib`.

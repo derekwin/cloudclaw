@@ -13,6 +13,7 @@ EXP_AUTO_INIT_RUNTIME="${CC_EXP_AUTO_INIT_RUNTIME:-1}"
 EXP_AUTO_RESET_DB="${CC_EXP_AUTO_RESET_DB:-1}"
 EXP_AUTO_CLEAN_STATE="${CC_EXP_AUTO_CLEAN_STATE:-1}"
 EXP_SMOKE_BEFORE_RUN="${CC_EXP_SMOKE_BEFORE_RUN:-1}"
+EXP_FORCE_KILL_STRAY_RUNNERS="${CC_EXP_FORCE_KILL_STRAY_RUNNERS:-1}"
 
 log() {
   printf '[experiments] %s\n' "$*" >&2
@@ -141,9 +142,79 @@ clean_experiment_state() {
 
 prepare_experiment_run() {
   local runtime_name="${1:-${AGENT_RUNTIME:-}}"
+  if [ -n "$runtime_name" ]; then
+    stop_runner_if_running "$runtime_name"
+  fi
+  terminate_stray_runners
   init_runtime_config "$runtime_name"
   reset_experiment_db
   clean_experiment_state
+}
+
+stop_runner_if_running() {
+  local runtime_name="${1:-${AGENT_RUNTIME:-}}"
+  if [ -z "$runtime_name" ]; then
+    return
+  fi
+  log "stopping runner before environment reset: runtime=$runtime_name"
+  AGENT_RUNTIME="$runtime_name" bash "$CLOUDCLAW_CTL" runner stop >/dev/null 2>&1 || true
+}
+
+find_stray_runner_pids() {
+  require_env DB_DSN
+  require_cmd python3
+  python3 - "$DB_DSN" "$REPO_ROOT" <<'PY'
+import subprocess
+import sys
+
+dsn = sys.argv[1]
+repo_root = sys.argv[2]
+try:
+    out = subprocess.check_output(["ps", "-eo", "pid=,args="], text=True)
+except Exception:
+    sys.exit(0)
+
+for line in out.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split(None, 1)
+    if len(parts) != 2:
+        continue
+    pid, args = parts
+    if "cloudclaw run" not in args:
+        continue
+    if dsn not in args:
+        continue
+    if repo_root not in args and "cloudclaw" not in args:
+        continue
+    print(pid)
+PY
+}
+
+terminate_stray_runners() {
+  local pids=""
+  local pid=""
+  if [ "$EXP_FORCE_KILL_STRAY_RUNNERS" != "1" ]; then
+    return
+  fi
+  require_env DB_DSN
+
+  pids="$(find_stray_runner_pids || true)"
+  if [ -z "$pids" ]; then
+    return
+  fi
+
+  log "terminating stray cloudclaw runners using current DB_DSN: $(printf '%s' "$pids" | tr '\n' ' ' | xargs)"
+  for pid in $pids; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  sleep 1
+  for pid in $pids; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
 }
 
 smoke_check() {
@@ -192,6 +263,14 @@ restart_stack() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  bash "$CLOUDCLAW_CTL" runner stop
+
+  AGENT_RUNTIME="$AGENT_RUNTIME" \
+  DB_DSN="$DB_DSN" \
+  POOL_SIZE="$pool_size" \
+  WORKSPACE_MODE="$workspace_mode" \
+  WORKSPACE_STATE_MODE="$workspace_state_mode" \
+  RETRY_PRIORITY="$retry_priority" \
   bash "$CLOUDCLAW_CTL" pool restart
 
   AGENT_RUNTIME="$AGENT_RUNTIME" \
@@ -200,7 +279,7 @@ restart_stack() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
-  bash "$CLOUDCLAW_CTL" runner restart
+  bash "$CLOUDCLAW_CTL" runner start
 
   sleep "${CLOUDCLAW_RESTART_SLEEP:-2}"
 }

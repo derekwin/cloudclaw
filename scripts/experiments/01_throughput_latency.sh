@@ -24,7 +24,7 @@ POLL_INTERVAL="${CC_EXP_POLL_INTERVAL:-300ms}"
 TIMEOUT="${CC_EXP_TIMEOUT:-15m}"
 MAX_RETRIES="${CC_EXP_MAX_RETRIES:-2}"
 REPEAT="${CC_EXP_REPEAT:-1}"
-INPUT_PREFIX="${CC_EXP_INPUT_PREFIX:-throughput latency benchmark task}"
+INPUT_PREFIX="${CC_EXP_INPUT_PREFIX:-Without using any tools, shell commands, file reads, file writes, or network access, reply with exactly one line: CLOUDCLAW_OK}"
 RETRY_PRIORITY="${CC_EXP_RETRY_PRIORITY:-0}"
 
 read -r -a POOL_SIZES <<<"$POOL_SIZES_STR"
@@ -75,6 +75,7 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
             --max-retries "$MAX_RETRIES" \
             --task-type "$task_type" \
             --input-prefix "$INPUT_PREFIX" \
+            --raw-input=true \
             --summary-file "$summary_file" \
             --append-csv "$ARTIFACT_ROOT/tasksim_summary.csv" \
             --fetch-final-task=true \
@@ -106,6 +107,7 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
   "poll_interval": $(json_quote "$POLL_INTERVAL"),
   "timeout": $(json_quote "$TIMEOUT"),
   "max_retries": $MAX_RETRIES,
+  "raw_input": true,
   "repeat_index": $rep,
   "summary_file": $(json_quote "$summary_file"),
   "tasksim_exit_code": $run_exit

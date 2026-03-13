@@ -181,7 +181,10 @@ func main() {
 		go func(workerID int) {
 			defer wg.Done()
 			for job := range jobsCh {
-				input := fmt.Sprintf("%s | worker=%d user=%s idx=%d", cfg.inputPrefix, workerID, job.userID, job.index)
+				input := cfg.inputPrefix
+				if !cfg.rawInput {
+					input = fmt.Sprintf("%s | worker=%d user=%s idx=%d", cfg.inputPrefix, workerID, job.userID, job.index)
+				}
 				t, err := cli.SubmitTask(cloudclaw.SubmitTaskRequest{
 					UserID:     job.userID,
 					TaskType:   taskType,
@@ -314,6 +317,7 @@ type config struct {
 	taskTypePrefix string
 	taskType       string
 	inputPrefix    string
+	rawInput       bool
 	summaryFile    string
 	appendCSV      string
 	fetchFinalTask bool
@@ -337,6 +341,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.taskTypePrefix, "task-type-prefix", "sim", "task_type prefix for this simulation run")
 	flag.StringVar(&cfg.taskType, "task-type", "", "fixed task_type for this simulation run (optional)")
 	flag.StringVar(&cfg.inputPrefix, "input-prefix", "simulation task", "task input prefix")
+	flag.BoolVar(&cfg.rawInput, "raw-input", false, "submit input-prefix exactly as task input without appending worker/user/index metadata")
 	flag.StringVar(&cfg.summaryFile, "summary-file", "", "write structured summary JSON to this path")
 	flag.StringVar(&cfg.appendCSV, "append-csv", "", "append one-line summary CSV row to this path")
 	flag.BoolVar(&cfg.fetchFinalTask, "fetch-final-task", true, "fetch final task state to compute queue/run latency and attempts")
