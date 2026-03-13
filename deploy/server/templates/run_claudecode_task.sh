@@ -49,14 +49,25 @@ fi
 
 if [ -n "$SHARED_DIR" ] && [ -d "$SHARED_WORKSPACE" ]; then
   for f in AGENT.md IDENTITY.md SOUL.md; do
-    if [ -f "$SHARED_WORKSPACE/$f" ]; then
+    if [ -f "$SHARED_WORKSPACE/$f" ] && [ ! -f "$CLOUDCLAW_WORKSPACE/$f" ]; then
       cp -f "$SHARED_WORKSPACE/$f" "$CLOUDCLAW_WORKSPACE/$f"
     fi
   done
 
   if [ -d "$SHARED_WORKSPACE/skills" ]; then
     mkdir -p "$CLOUDCLAW_WORKSPACE/skills"
-    cp -R "$SHARED_WORKSPACE/skills/." "$CLOUDCLAW_WORKSPACE/skills/" || true
+    (
+      cd "$SHARED_WORKSPACE/skills"
+      find . -type d -exec mkdir -p "$CLOUDCLAW_WORKSPACE/skills/{}" \;
+      find . -type f | while IFS= read -r rel; do
+        rel="${rel#./}"
+        target="$CLOUDCLAW_WORKSPACE/skills/$rel"
+        if [ ! -e "$target" ]; then
+          mkdir -p "$(dirname "$target")"
+          cp -f "$SHARED_WORKSPACE/skills/$rel" "$target"
+        fi
+      done
+    )
   fi
 fi
 

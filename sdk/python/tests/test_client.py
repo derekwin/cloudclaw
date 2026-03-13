@@ -1,6 +1,12 @@
 import json
+import pathlib
+import sys
 import unittest
 from unittest.mock import patch
+
+SDK_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(SDK_ROOT) not in sys.path:
+    sys.path.insert(0, str(SDK_ROOT))
 
 from cloudclaw.client import Client, CloudClawError
 

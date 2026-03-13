@@ -26,10 +26,16 @@ bash deploy/server/cloudclawctl.sh up
 
 ### PostgreSQL（推荐用于高并发实验）
 
-1) 启动本地 PostgreSQL 容器（已提供脚本）
+1) 启动本地 PostgreSQL 容器（示例）
 
 ```bash
-scripts/experiments/00_postgres_up.sh
+docker run -d \
+  --name cloudclaw-postgres \
+  -e POSTGRES_USER=cloudclaw \
+  -e POSTGRES_PASSWORD=cloudclaw \
+  -e POSTGRES_DB=cloudclaw \
+  -p 15432:5432 \
+  postgres:16
 ```
 
 2) 按脚本输出设置环境变量（示例）
@@ -184,9 +190,8 @@ go run ./cmd/tasksim \
 
 ### 论文实验脚本（6.2）
 
-详见 `scripts/experiments/README.md`，包含：
+详见 `scripts/experiments/README.md`，当前仓库包含：
 
 1. `01_throughput_latency.sh`：固定池大小，负载从 10 到 1000。
-2. `02_fault_injection.sh`：随机 kill runner/容器并统计恢复。
+2. `02_fault_recovery.sh`：随机 kill runner/容器并统计恢复，也支持对比 `RETRY_PRIORITY=0/1`。
 3. `03_isolation_validation.sh`：跨用户同名文件/恶意路径/超限文件验证。
-4. `04_retry_priority_gain.sh`：对比 `RETRY_PRIORITY=0` 与 `RETRY_PRIORITY=1` 的尾延迟。

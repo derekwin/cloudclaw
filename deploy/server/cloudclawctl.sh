@@ -75,6 +75,9 @@ SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
 SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
 SHARED_OPENCODE_DIR="$SHARED_DIR/opencode"
 SHARED_OPENCLAW_DIR="$SHARED_DIR/openclaw"
+SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-$SHARED_DIR/skills}"
+SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}"
+SHARED_SKILLS_MOUNT_PATH="${SHARED_SKILLS_MOUNT_PATH:-/workspace/.cloudclaw_shared_skills}"
 LEGACY_OPENCODE_CONFIG_DIR="$CC_HOME/opencode/config"
 DATA_DIR="$CC_HOME/data"
 USER_RUNTIME_DIR="$CC_HOME/user-runtime"
@@ -244,7 +247,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$SHARED_OPENCLAW_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$SHARED_OPENCLAW_DIR" "$SHARED_SKILLS_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
   if [ -d "$LEGACY_OPENCODE_CONFIG_DIR" ] && [ -n "$(ls -A "$LEGACY_OPENCODE_CONFIG_DIR" 2>/dev/null)" ] && [ -z "$(ls -A "$SHARED_OPENCODE_DIR" 2>/dev/null)" ]; then
     cp -R "$LEGACY_OPENCODE_CONFIG_DIR/." "$SHARED_OPENCODE_DIR/" || true
     log "migrated legacy opencode shared config: $LEGACY_OPENCODE_CONFIG_DIR -> $SHARED_OPENCODE_DIR"
@@ -727,6 +730,7 @@ start_pool() {
     tmpfs_args=()
     network_args=()
     env_file_args=()
+    skills_mount_args=()
     if [ "$RUNTIME_NAME" = "opencode" ]; then
       env_args+=(
         "-e" "OPENCODE_SHARED_CONFIG_DIR=${RUNTIME_CONFIG_MOUNT_PATH}"
@@ -792,6 +796,9 @@ start_pool() {
       fi
       env_file_args+=("--env-file" "$AGENT_ENV_FILE")
     fi
+    if [ "$SHARED_SKILLS_MODE" = "mount" ] && [ -d "$SHARED_SKILLS_DIR" ]; then
+      skills_mount_args+=("-v" "${SHARED_SKILLS_DIR}:${SHARED_SKILLS_MOUNT_PATH}:ro")
+    fi
 
     docker run -d \
       --name "$name" \
@@ -806,6 +813,7 @@ start_pool() {
       --entrypoint /bin/sh \
       -v "${RUNTIME_CONFIG_DIR}:${RUNTIME_CONFIG_MOUNT_PATH}:ro" \
       -v "${DATA_DIR}/runs:${WORKSPACE_MOUNT_PATH}" \
+      "${skills_mount_args[@]}" \
       "${env_args[@]}" \
       "$RUNNER_IMAGE" \
       -lc 'sleep infinity' >/dev/null
@@ -875,11 +883,17 @@ start_cloudclaw() {
     --workspace-mode "$workspace_mode"
     --docker-label-selector "$POOL_LABEL"
     --docker-remote-dir "$DOCKER_REMOTE_DIR"
-    --shared-skills-dir "$SHARED_DIR"
     --docker-task-cmd "$DOCKER_TASK_CMD"
     --user-runtime-dir "$USER_RUNTIME_DIR"
     --retry-priority "$RETRY_PRIORITY"
   )
+  if [ -d "$SHARED_SKILLS_DIR" ]; then
+    cmd+=(--shared-skills-dir "$SHARED_SKILLS_DIR")
+    cmd+=(--shared-skills-mode "$SHARED_SKILLS_MODE")
+    if [ "$SHARED_SKILLS_MODE" = "mount" ]; then
+      cmd+=(--shared-skills-mount-path "$SHARED_SKILLS_MOUNT_PATH")
+    fi
+  fi
   if [ "$workspace_mode" = "mount" ]; then
     cmd+=(--workspace-mount-path "$WORKSPACE_MOUNT_PATH")
   fi

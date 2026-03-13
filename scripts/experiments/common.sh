@@ -263,6 +263,8 @@ restart_stack() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
+  SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" runner stop
 
   AGENT_RUNTIME="$AGENT_RUNTIME" \
@@ -271,6 +273,8 @@ restart_stack() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
+  SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" pool restart
 
   AGENT_RUNTIME="$AGENT_RUNTIME" \
@@ -279,6 +283,8 @@ restart_stack() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
+  SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" runner start
 
   sleep "${CLOUDCLAW_RESTART_SLEEP:-2}"
@@ -298,6 +304,8 @@ ensure_stack_running() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
+  SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" pool start
 
   AGENT_RUNTIME="$AGENT_RUNTIME" \
@@ -306,6 +314,8 @@ ensure_stack_running() {
   WORKSPACE_MODE="$workspace_mode" \
   WORKSPACE_STATE_MODE="$workspace_state_mode" \
   RETRY_PRIORITY="$retry_priority" \
+  CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
+  SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" runner start
 }
 
