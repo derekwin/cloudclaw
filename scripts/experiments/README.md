@@ -17,15 +17,15 @@ Before each run, the experiment scripts will:
 - clear local run state under the current `CC_HOME`
 - stop stray `cloudclaw run` processes using the same `DB_DSN`
 - restart the pool and runner
-- run a smoke task before the real workload
 
-You can disable these if needed:
+By default, the scripts skip the preflight smoke task and go straight to the real workload.
+You can override the automatic steps if needed:
 
 ```bash
 export CC_EXP_AUTO_INIT_RUNTIME=0
 export CC_EXP_AUTO_RESET_DB=0
 export CC_EXP_AUTO_CLEAN_STATE=0
-export CC_EXP_SMOKE_BEFORE_RUN=0
+export CC_EXP_SMOKE_BEFORE_RUN=1
 export CC_EXP_FORCE_KILL_STRAY_RUNNERS=0
 ```
 

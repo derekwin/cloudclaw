@@ -1018,7 +1018,9 @@ smoke() {
     exit 1
   fi
 
-  submit_out="$($CLOUDCLAW_BIN task submit --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --user-id smoke_user --task-type smoke --input "smoke test, tell me who you are.")"
+  smoke_input="${CLOUDCLAW_SMOKE_INPUT:-Without using any tools, shell commands, file reads, file writes, or network access, reply with exactly one line: CLOUDCLAW_OK}"
+  smoke_wait_seconds="${CLOUDCLAW_SMOKE_WAIT_SECONDS:-60}"
+  submit_out="$($CLOUDCLAW_BIN task submit --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --user-id smoke_user --task-type smoke --input "$smoke_input")"
   task_id="$(printf '%s' "$submit_out" | sed -n 's/.*"id": "\([^"]*\)".*/\1/p' | head -n1)"
   if [ -z "$task_id" ]; then
     echo "failed to parse task id from submit output" >&2
@@ -1027,7 +1029,7 @@ smoke() {
   fi
 
   log "submitted smoke task: $task_id"
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 "$smoke_wait_seconds"); do
     status_json="$($CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id")"
     status="$(printf '%s' "$status_json" | sed -n 's/.*"status": "\([^"]*\)".*/\1/p' | head -n1)"
     if [ "$status" = "SUCCEEDED" ]; then
@@ -1036,13 +1038,17 @@ smoke() {
     fi
     if [ "$status" = "FAILED" ] || [ "$status" = "CANCELED" ]; then
       echo "$status_json"
+      $CLOUDCLAW_BIN task trace --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" "$task_id" || true
+      $CLOUDCLAW_BIN result get --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id" || true
       exit 1
     fi
     sleep 1
   done
 
-  log "smoke task did not finish in time"
+  log "smoke task did not finish in time (waited ${smoke_wait_seconds}s)"
   $CLOUDCLAW_BIN task status --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id"
+  $CLOUDCLAW_BIN task trace --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" "$task_id" || true
+  $CLOUDCLAW_BIN result get --data-dir "$DATA_DIR" --db-driver "$DB_DRIVER" --db-dsn "$DB_DSN" --task-id "$task_id" || true
   exit 1
 }
 
