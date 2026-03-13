@@ -49,15 +49,20 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
           run_slug="pool${pool_size}_wm${workspace_mode}_ws${workspace_state_mode}_tasks${tasks_per_user}_rep${rep}"
           run_dir="$ARTIFACT_ROOT/$run_slug"
           summary_file="$run_dir/summary.json"
+          meta_file="$run_dir/meta.json"
+          smoke_file="$run_dir/preflight_smoke.log"
+          runner_log_file="$run_dir/runner.log"
           task_type="exp_tput_${SESSION_ID}_${run_slug}"
           submitted_total=$((user_count * tasks_per_user))
 
           ensure_artifact_dir "$run_dir"
           prepare_experiment_run "$AGENT_RUNTIME"
           restart_stack "$pool_size" "$workspace_mode" "$workspace_state_mode" "$RETRY_PRIORITY"
+          smoke_check "$AGENT_RUNTIME" "$smoke_file"
           log "running throughput sweep: $run_slug submitted_total=$submitted_total"
 
-          "$TASKSIM_BIN" \
+          run_exit=0
+          if ! "$TASKSIM_BIN" \
             --data-dir "$DATA_DIR" \
             --db-driver postgres \
             --db-dsn "$DB_DSN" \
@@ -75,9 +80,11 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
             --fetch-final-task=true \
             --collect-events=false \
             --verbose=false \
-            >"$run_dir/tasksim.log" 2>&1
+            >"$run_dir/tasksim.log" 2>&1; then
+            run_exit=$?
+          fi
 
-          cat >"$run_dir/meta.json" <<EOF
+          cat >"$meta_file" <<EOF
 {
   "experiment": "throughput_latency",
   "session_id": $(json_quote "$SESSION_ID"),
@@ -100,9 +107,14 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
   "timeout": $(json_quote "$TIMEOUT"),
   "max_retries": $MAX_RETRIES,
   "repeat_index": $rep,
-  "summary_file": $(json_quote "$summary_file")
+  "summary_file": $(json_quote "$summary_file"),
+  "tasksim_exit_code": $run_exit
 }
 EOF
+          if [ "$run_exit" -ne 0 ]; then
+            log "throughput run failed or timed out: $run_slug exit_code=$run_exit"
+          fi
+          capture_runner_log "$runner_log_file"
         done
       done
     done

@@ -18,6 +18,7 @@ By default, every experiment run now performs a fresh setup step:
 - initialize runtime config via `cloudclawctl init`
 - reset the CloudClaw tables in the database pointed to by `DB_DSN`
 - clear local `data/runs` and `user-runtime` state under the current `CC_HOME`
+- run `cloudclawctl smoke` before the actual workload and store its output in the artifact directory
 
 You can disable these with:
 
@@ -25,6 +26,7 @@ You can disable these with:
 export CC_EXP_AUTO_INIT_RUNTIME=0
 export CC_EXP_AUTO_RESET_DB=0
 export CC_EXP_AUTO_CLEAN_STATE=0
+export CC_EXP_SMOKE_BEFORE_RUN=0
 ```
 
 ## Layout

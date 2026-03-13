@@ -85,14 +85,19 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
       run_slug="fault_${fault_mode}_retry${retry_priority}_rep${rep}"
       run_dir="$ARTIFACT_ROOT/$run_slug"
       summary_file="$run_dir/summary.json"
+      meta_file="$run_dir/meta.json"
+      smoke_file="$run_dir/preflight_smoke.log"
+      runner_log_file="$run_dir/runner.log"
       task_type="exp_fault_${SESSION_ID}_${run_slug}"
 
       ensure_artifact_dir "$run_dir"
       prepare_experiment_run "$AGENT_RUNTIME"
       restart_stack "$POOL_SIZE_VALUE" "$WORKSPACE_MODE_VALUE" "$WORKSPACE_STATE_MODE_VALUE" "$retry_priority"
+      smoke_check "$AGENT_RUNTIME" "$smoke_file"
 
       log "running fault-recovery workload: $run_slug"
-      (
+      run_exit=0
+      if ! (
         "$TASKSIM_BIN" \
           --data-dir "$DATA_DIR" \
           --db-driver postgres \
@@ -122,9 +127,11 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
         fi
       done
 
-      wait "$tasksim_pid"
+      if ! wait "$tasksim_pid"; then
+        run_exit=$?
+      fi
 
-      cat >"$run_dir/meta.json" <<EOF
+      cat >"$meta_file" <<EOF
 {
   "experiment": "fault_recovery",
   "session_id": $(json_quote "$SESSION_ID"),
@@ -150,9 +157,14 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
   "fault_down_seconds": $FAULT_DOWN_SECONDS,
   "fault_count": $FAULT_COUNT,
   "repeat_index": $rep,
-  "summary_file": $(json_quote "$summary_file")
+  "summary_file": $(json_quote "$summary_file"),
+  "tasksim_exit_code": $run_exit
 }
 EOF
+      if [ "$run_exit" -ne 0 ]; then
+        log "fault-recovery run failed or timed out: $run_slug exit_code=$run_exit"
+      fi
+      capture_runner_log "$runner_log_file"
 
       ensure_stack_running "$POOL_SIZE_VALUE" "$WORKSPACE_MODE_VALUE" "$WORKSPACE_STATE_MODE_VALUE" "$retry_priority"
     done

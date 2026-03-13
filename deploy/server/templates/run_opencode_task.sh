@@ -133,6 +133,9 @@ set -- "$@" "$CLOUDCLAW_INPUT"
 stderr_log="$(mktemp -p "$TMP_ROOT" opencode-run.XXXXXX)"
 if ! "$@" >"$CLOUDCLAW_WORKSPACE/result.txt" 2>"$stderr_log"; then
   cat "$stderr_log" >&2 || true
+  if [ -s "$stderr_log" ]; then
+    cp "$stderr_log" "$CLOUDCLAW_WORKSPACE/result.txt"
+  fi
   echo "opencode run command failed" >&2
   exit 1
 fi

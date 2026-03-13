@@ -12,6 +12,7 @@ RESET_DB_BIN="${RESET_DB_BIN:-$ARTIFACTS_BASE/bin/exp-reset-db}"
 EXP_AUTO_INIT_RUNTIME="${CC_EXP_AUTO_INIT_RUNTIME:-1}"
 EXP_AUTO_RESET_DB="${CC_EXP_AUTO_RESET_DB:-1}"
 EXP_AUTO_CLEAN_STATE="${CC_EXP_AUTO_CLEAN_STATE:-1}"
+EXP_SMOKE_BEFORE_RUN="${CC_EXP_SMOKE_BEFORE_RUN:-1}"
 
 log() {
   printf '[experiments] %s\n' "$*" >&2
@@ -143,6 +144,37 @@ prepare_experiment_run() {
   init_runtime_config "$runtime_name"
   reset_experiment_db
   clean_experiment_state
+}
+
+smoke_check() {
+  local runtime_name="${1:-${AGENT_RUNTIME:-}}"
+  local output_file="${2:-}"
+  if [ "$EXP_SMOKE_BEFORE_RUN" != "1" ]; then
+    return
+  fi
+  require_env DB_DSN
+  if [ -z "$runtime_name" ]; then
+    die "runtime name is required for smoke check"
+  fi
+  log "running smoke check for runtime=$runtime_name"
+  if [ -n "$output_file" ]; then
+    if ! AGENT_RUNTIME="$runtime_name" DB_DSN="$DB_DSN" bash "$CLOUDCLAW_CTL" smoke >"$output_file" 2>&1; then
+      die "smoke check failed; see $output_file"
+    fi
+    return
+  fi
+  AGENT_RUNTIME="$runtime_name" DB_DSN="$DB_DSN" bash "$CLOUDCLAW_CTL" smoke
+}
+
+capture_runner_log() {
+  local output_file="$1"
+  local log_file="$CC_HOME_DIR/logs/cloudclaw.log"
+  ensure_artifact_dir "$(dirname "$output_file")"
+  if [ -f "$log_file" ]; then
+    cp "$log_file" "$output_file"
+    return
+  fi
+  printf 'runner log not found: %s\n' "$log_file" >"$output_file"
 }
 
 restart_stack() {
