@@ -248,6 +248,43 @@ capture_runner_log() {
   printf 'runner log not found: %s\n' "$log_file" >"$output_file"
 }
 
+wait_runner_ready() {
+  local expected_containers="$1"
+  local timeout_seconds="${CLOUDCLAW_RUNNER_READY_TIMEOUT:-20}"
+  local cloudclaw_bin="$CC_HOME_DIR/bin/cloudclaw"
+  local ready_json=""
+
+  if [ ! -x "$cloudclaw_bin" ]; then
+    die "cloudclaw binary not found while waiting for runner readiness: $cloudclaw_bin"
+  fi
+
+  for _ in $(seq 1 "$timeout_seconds"); do
+    if ready_json="$("$cloudclaw_bin" container-status --data-dir "$DATA_DIR" --db-driver postgres --db-dsn "$DB_DSN" 2>/dev/null)"; then
+      ready_count="$(python3 - "$ready_json" <<'PY'
+import json
+import sys
+
+try:
+    items = json.loads(sys.argv[1])
+except Exception:
+    print(-1)
+    raise SystemExit(0)
+
+print(len(items) if isinstance(items, list) else -1)
+PY
+)"
+      if [ "$ready_count" -ge "$expected_containers" ]; then
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  log "runner did not become ready within ${timeout_seconds}s (expected_containers=$expected_containers)"
+  bash "$CLOUDCLAW_CTL" runner logs 200 || true
+  return 1
+}
+
 restart_stack() {
   local pool_size="$1"
   local workspace_mode="$2"
@@ -288,6 +325,7 @@ restart_stack() {
   bash "$CLOUDCLAW_CTL" runner start
 
   sleep "${CLOUDCLAW_RESTART_SLEEP:-2}"
+  wait_runner_ready "$pool_size" || die "runner failed to register pool containers after restart"
 }
 
 ensure_stack_running() {
@@ -317,6 +355,8 @@ ensure_stack_running() {
   CLOUDCLAW_SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-}" \
   SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}" \
   bash "$CLOUDCLAW_CTL" runner start
+
+  wait_runner_ready "$pool_size" || die "runner failed to register pool containers"
 }
 
 first_pool_container() {

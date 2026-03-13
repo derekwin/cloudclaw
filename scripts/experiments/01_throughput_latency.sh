@@ -62,7 +62,7 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
           log "running throughput sweep: $run_slug submitted_total=$submitted_total"
 
           run_exit=0
-          if ! "$TASKSIM_BIN" \
+          "$TASKSIM_BIN" \
             --data-dir "$DATA_DIR" \
             --db-driver postgres \
             --db-dsn "$DB_DSN" \
@@ -81,9 +81,7 @@ for workspace_mode in "${WORKSPACE_MODES[@]}"; do
             --fetch-final-task=true \
             --collect-events=false \
             --verbose=false \
-            >"$run_dir/tasksim.log" 2>&1; then
-            run_exit=$?
-          fi
+            >"$run_dir/tasksim.log" 2>&1 || run_exit=$?
 
           cat >"$meta_file" <<EOF
 {
