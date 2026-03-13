@@ -45,25 +45,15 @@ Minimal example:
 export AGENT_RUNTIME=opencode
 export DB_DSN='postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable'
 
-bash scripts/experiments/01_throughput_latency.sh
-```
-
-Useful knobs:
-
-```bash
-export CC_EXP_POOL_SIZES="2 4"
-export CC_EXP_WORKSPACE_MODES="mount copy"
-export CC_EXP_WORKSPACE_STATE_MODES="ephemeral"
+# throughput / latency
+export CC_EXP_POOL_SIZES="1 2 4"
 export CC_EXP_USERS="sim_u1,sim_u2,sim_u3,sim_u4"
 export CC_EXP_TASKS_PER_USER_LIST="5 10 20 40"
-export CC_EXP_REPEAT=2
+export CC_EXP_WORKSPACE_MODES="mount copy"
+export CC_EXP_REPEAT=3
+
+bash scripts/experiments/01_throughput_latency.sh
 ```
-
-Each run stores:
-
-- `summary.json`: direct output from `cmd/tasksim`
-- `tasksim.log`: raw simulator log
-- `meta.json`: sweep parameters for plotting/aggregation
 
 ## 2. Fault Recovery
 
@@ -73,27 +63,14 @@ Minimal example:
 export AGENT_RUNTIME=opencode
 export DB_DSN='postgres://cloudclaw:cloudclaw@127.0.0.1:15432/cloudclaw?sslmode=disable'
 
-bash scripts/experiments/02_fault_recovery.sh
-```
-
-Useful knobs:
-
-```bash
 export CC_EXP_FAULT_MODES="runner container"
 export CC_EXP_RETRY_PRIORITIES="0 1"
 export CC_EXP_TASKS_PER_USER=12
-export CC_EXP_FAULT_DELAY_SECONDS=10
-export CC_EXP_FAULT_DOWN_SECONDS=8
-export CC_EXP_FAULT_COUNT=1
-export CC_EXP_REPEAT=2
+export CC_EXP_REPEAT=3
+bash scripts/experiments/02_fault_recovery.sh
+
+bash scripts/experiments/02_fault_recovery.sh
 ```
-
-Notes:
-
-- `runner` fault stops CloudClaw for a short window and then restarts it.
-- `container` fault issues `docker kill` to one pool container and relies on Docker restart policy.
-- Use an isolated experiment environment because `cmd/tasksim` consumes the global result queue.
-- DB reset uses `psql` and drops the CloudClaw tables in the database referenced by the current `DB_DSN`.
 
 ## 3. Isolation / Correctness
 
@@ -105,19 +82,6 @@ export AGENT_RUNTIME=opencode
 
 bash scripts/experiments/03_isolation_validation.sh
 ```
-
-The generated outputs are:
-
-- `summary.json`
-- `checks.csv`
-- `checks.md`
-
-The checker currently validates:
-
-- cross-user isolation for same-named files
-- symlink-based path escape rejection
-- oversized file rejection
-- cross-task runtime-state persistence in ephemeral mode
 
 ## Plotting / Aggregation
 
