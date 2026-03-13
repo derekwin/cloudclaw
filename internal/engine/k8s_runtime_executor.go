@@ -36,7 +36,7 @@ func (e *K8sRuntimeExecutor) Execute(ctx context.Context, containerID string, ta
 		return model.TokenUsage{}, err
 	}
 
-	prepareCmd := prepareRemoteUserDataCommand(layout.UserDataDir)
+	prepareCmd := prepareRemoteTaskLayoutCommand(layout)
 	if _, err := e.Kubectl.Exec(ctx, containerID, prepareCmd); err != nil {
 		return model.TokenUsage{}, err
 	}

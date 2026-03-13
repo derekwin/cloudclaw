@@ -63,6 +63,12 @@ bash scripts/experiments/01_throughput_latency.sh
 The experiment scripts submit this prompt as raw task input, so benchmark tasks will not have
 `worker=... user=... idx=...` appended by `tasksim`.
 
+For the most stable short-paper throughput runs, use:
+
+```bash
+export CC_EXP_INPUT_PREFIX="Without using any tools, shell commands, file reads, file writes, or network access, reply with exactly one line: CLOUDCLAW_OK"
+```
+
 ## 2. Fault Recovery
 
 Minimal example:
@@ -78,6 +84,8 @@ export CC_EXP_REPEAT=3
 export CC_EXP_INPUT_PREFIX="Without using any tools, write 120 numbered one-line items about system resilience."
 bash scripts/experiments/02_fault_recovery.sh
 ```
+
+If you want a similarly controlled fault-recovery workload, prefer a plain-text prompt that does not encourage tool use.
 
 ## 3. Isolation / Correctness
 

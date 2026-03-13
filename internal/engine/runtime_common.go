@@ -38,9 +38,19 @@ func buildRemoteTaskLayout(baseDir, taskID string) remoteTaskLayout {
 	}
 }
 
-func prepareRemoteUserDataCommand(remoteUserDataDir string) string {
-	quoted := shellQuote(remoteUserDataDir)
-	return fmt.Sprintf("mkdir -p %s && find %s -mindepth 1 -maxdepth 1 -exec rm -rf {} +", quoted, quoted)
+func prepareRemoteTaskLayoutCommand(layout remoteTaskLayout) string {
+	taskDir := shellQuote(layout.TaskDir)
+	userDataDir := shellQuote(layout.UserDataDir)
+	taskFile := shellQuote(layout.TaskFile)
+	usageFile := shellQuote(layout.UsageFile)
+	return fmt.Sprintf(
+		"mkdir -p %s %s && find %s -mindepth 1 -maxdepth 1 -exec rm -rf {} + && rm -f %s %s",
+		taskDir,
+		userDataDir,
+		userDataDir,
+		taskFile,
+		usageFile,
+	)
 }
 
 func resetWorkspaceDir(workspaceDir string) error {

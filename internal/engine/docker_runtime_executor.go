@@ -51,7 +51,7 @@ func (e *DockerRuntimeExecutor) Execute(ctx context.Context, containerID string,
 
 	layout := buildRemoteTaskLayout(e.RemoteBaseDir, task.ID)
 
-	prepareCmd := prepareRemoteUserDataCommand(layout.UserDataDir)
+	prepareCmd := prepareRemoteTaskLayoutCommand(layout)
 	if _, err := e.Docker.Exec(ctx, containerID, prepareCmd); err != nil {
 		return model.TokenUsage{}, err
 	}

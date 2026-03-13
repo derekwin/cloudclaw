@@ -33,10 +33,22 @@ func TestResolveUsageFallsBackToEstimatedResult(t *testing.T) {
 	}
 }
 
-func TestPrepareRemoteUserDataCommandCleansHiddenFiles(t *testing.T) {
-	cmd := prepareRemoteUserDataCommand("/tmp/test-dir")
-	if !strings.Contains(cmd, "find") || !strings.Contains(cmd, "-mindepth 1") {
-		t.Fatalf("unexpected cleanup command: %s", cmd)
+func TestPrepareRemoteTaskLayoutCommandCreatesAndCleansTaskPaths(t *testing.T) {
+	layout := remoteTaskLayout{
+		TaskDir:     "/tmp/task-1",
+		UserDataDir: "/tmp/task-1/userdata",
+		TaskFile:    "/tmp/task-1/task.json",
+		UsageFile:   "/tmp/task-1/usage.json",
+	}
+	cmd := prepareRemoteTaskLayoutCommand(layout)
+	if !strings.Contains(cmd, "mkdir -p '/tmp/task-1' '/tmp/task-1/userdata'") {
+		t.Fatalf("expected task and userdata directories to be created: %s", cmd)
+	}
+	if !strings.Contains(cmd, "find '/tmp/task-1/userdata' -mindepth 1 -maxdepth 1") {
+		t.Fatalf("expected userdata cleanup in command: %s", cmd)
+	}
+	if !strings.Contains(cmd, "rm -f '/tmp/task-1/task.json' '/tmp/task-1/usage.json'") {
+		t.Fatalf("expected stale task files cleanup in command: %s", cmd)
 	}
 }
 
