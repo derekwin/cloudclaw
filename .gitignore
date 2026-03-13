@@ -11,3 +11,5 @@ cloudclaw_data-home
 # Python
 __pycache__/
 *.pyc
+
+experiment_artifacts/bin/
