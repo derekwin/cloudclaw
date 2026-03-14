@@ -79,6 +79,7 @@ The throughput and fault scripts submit this prompt as raw task input, so `tasks
 Recommended paper setting:
 
 ```bash
+export AGENT_RUNTIME=mock // Use a mock runtime for exp1 to prevent LLM API rate limiting from affecting high concurrency.
 export CC_EXP_POOL_SIZES="1 2 4"
 export CC_EXP_USERS="sim_u1,sim_u2,sim_u3,sim_u4"
 export CC_EXP_TASKS_PER_USER_LIST="5 10 20 40"
