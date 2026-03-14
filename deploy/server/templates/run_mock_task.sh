@@ -18,13 +18,8 @@ esac
 
 mkdir -p "$CLOUDCLAW_WORKSPACE" "$MOCK_TASK_STATE_DIR"
 
-python3 - "$MOCK_TASK_SLEEP_MS" <<'PY'
-import sys
-import time
-
-ms = int(sys.argv[1])
-time.sleep(ms / 1000.0)
-PY
+sleep_seconds=$(( (MOCK_TASK_SLEEP_MS + 999) / 1000 ))
+sleep "$sleep_seconds"
 
 task_count_file="$MOCK_TASK_STATE_DIR/task-count.txt"
 count=0

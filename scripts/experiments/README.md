@@ -80,7 +80,8 @@ Recommended paper setting:
 
 ```bash
 export AGENT_RUNTIME=mock // Use a mock runtime for exp1 to prevent LLM API rate limiting from affecting high concurrency.
-export CC_EXP_POOL_SIZES="1 2 4"
+export MOCK_TASK_SLEEP_MS=50
+export CC_EXP_POOL_SIZES="2 8 16"
 export CC_EXP_USERS="sim_u1,sim_u2,sim_u3,sim_u4"
 export CC_EXP_TASKS_PER_USER_LIST="5 10 20 40"
 export CC_EXP_WORKSPACE_MODES="mount copy"
@@ -104,6 +105,7 @@ Use a plain-text prompt here as well. The default is already a controlled non-to
 Recommended paper setting:
 
 ```bash
+export AGENT_RUNTIME=opencode
 export CC_EXP_FAULT_MODES="runner container"
 export CC_EXP_RETRY_PRIORITIES="0 1"
 export CC_EXP_TASKS_PER_USER=12

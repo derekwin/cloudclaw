@@ -196,7 +196,7 @@ load_runtime_profile() {
       RUNTIME_CONFIG_FILE="$SHARED_MOCK_DIR/mock.json"
       RUNTIME_CONFIG_MOUNT_PATH="/workspace/.config/mock"
       RUNTIME_CONFIG_BASENAME="mock.json"
-      DEFAULT_BASE_IMAGE="python:3.12-alpine"
+      DEFAULT_BASE_IMAGE="cloudclaw/opencode-runner:latest"
       POOL_LABEL="${POOL_LABEL:-app=mock-agent}"
       POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-mock-agent}"
       BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
@@ -1160,7 +1160,7 @@ Environment overrides:
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
-  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, openclaw=ghcr.io/anomalyco/openclaw:latest, claudecode=claudecode:latest, mock=python:3.12-alpine)
+  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, openclaw=ghcr.io/anomalyco/openclaw:latest, claudecode=claudecode:latest, mock=cloudclaw/opencode-runner:latest)
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
