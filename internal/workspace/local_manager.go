@@ -24,7 +24,7 @@ type LocalManagerConfig struct {
 	SharedSkillsDir  string
 	SharedSkillsMode string // copy | mount
 	WorkspaceState   string // db | ephemeral (alias: none)
-	RuntimeName      string // opencode | openclaw | claudecode
+	RuntimeName      string // opencode | openclaw | claudecode | mock
 	UserRuntimeDir   string // host dir to persist per-user runtime state for ephemeral mode
 }
 
@@ -98,6 +98,8 @@ func normalizeRuntimeName(name string) string {
 		return "claudecode"
 	case "openclaw":
 		return "openclaw"
+	case "mock":
+		return "mock"
 	default:
 		return "opencode"
 	}
@@ -185,6 +187,8 @@ func (m *LocalManager) runtimeStateDir(runDir string) string {
 		return filepath.Join(runDir, ".claudecode-home")
 	case "openclaw":
 		return filepath.Join(runDir, ".openclaw-home", ".local", "share", "openclaw")
+	case "mock":
+		return filepath.Join(runDir, ".mock-home")
 	default:
 		return filepath.Join(runDir, ".opencode-home", ".local", "share", "opencode")
 	}

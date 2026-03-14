@@ -90,6 +90,28 @@ func TestApplyExecutorRuntimeDefaultsForOpencodeNoChange(t *testing.T) {
 	}
 }
 
+func TestApplyExecutorRuntimeDefaultsForMock(t *testing.T) {
+	k8sLabel := defaultK8sLabelSelector
+	dockerLabel := defaultDockerLabelSelector
+	dockerImage := defaultDockerImage
+	dockerNamePrefix := defaultDockerNamePrefix
+
+	applyExecutorRuntimeDefaults("docker-mock", &k8sLabel, &dockerLabel, &dockerImage, &dockerNamePrefix)
+
+	if k8sLabel != "app=mock-agent" {
+		t.Fatalf("unexpected k8s label: %s", k8sLabel)
+	}
+	if dockerLabel != "app=mock-agent" {
+		t.Fatalf("unexpected docker label: %s", dockerLabel)
+	}
+	if dockerImage != "alpine:3.20" {
+		t.Fatalf("unexpected docker image: %s", dockerImage)
+	}
+	if dockerNamePrefix != "mock-agent" {
+		t.Fatalf("unexpected docker name prefix: %s", dockerNamePrefix)
+	}
+}
+
 func TestRuntimeNameForExecutor(t *testing.T) {
 	if got := runtimeNameForExecutor("docker-opencode"); got != "opencode" {
 		t.Fatalf("unexpected runtime for docker-opencode: %s", got)
@@ -99,6 +121,9 @@ func TestRuntimeNameForExecutor(t *testing.T) {
 	}
 	if got := runtimeNameForExecutor("k8s-claudecode"); got != "claudecode" {
 		t.Fatalf("unexpected runtime for k8s-claudecode: %s", got)
+	}
+	if got := runtimeNameForExecutor("docker-mock"); got != "mock" {
+		t.Fatalf("unexpected runtime for docker-mock: %s", got)
 	}
 	if got := runtimeNameForExecutor(""); got != "opencode" {
 		t.Fatalf("unexpected default runtime: %s", got)

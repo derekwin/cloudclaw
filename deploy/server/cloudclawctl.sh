@@ -75,6 +75,7 @@ SHARED_CLAUDECODE_DIR="$SHARED_DIR/claudecode"
 SHARED_CLAUDECODE_CONFIG="$SHARED_CLAUDECODE_DIR/config.json"
 SHARED_OPENCODE_DIR="$SHARED_DIR/opencode"
 SHARED_OPENCLAW_DIR="$SHARED_DIR/openclaw"
+SHARED_MOCK_DIR="$SHARED_DIR/mock"
 SHARED_SKILLS_DIR="${CLOUDCLAW_SHARED_SKILLS_DIR:-$SHARED_DIR/skills}"
 SHARED_SKILLS_MODE="${SHARED_SKILLS_MODE:-mount}"
 SHARED_SKILLS_MOUNT_PATH="${SHARED_SKILLS_MOUNT_PATH:-/workspace/.cloudclaw_shared_skills}"
@@ -117,7 +118,7 @@ require_arg() {
 
 require_runtime() {
   if [ -z "$AGENT_RUNTIME" ]; then
-    die "AGENT_RUNTIME is required (opencode|openclaw|claudecode)"
+    die "AGENT_RUNTIME is required (opencode|openclaw|claudecode|mock)"
   fi
 }
 
@@ -188,8 +189,22 @@ load_runtime_profile() {
       RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/claudecode-runner:latest}"
       DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_claudecode_task.sh}"
       ;;
+    mock)
+      RUNTIME_NAME="mock"
+      RUNTIME_EXECUTOR="docker-mock"
+      RUNTIME_CONFIG_DIR="$SHARED_MOCK_DIR"
+      RUNTIME_CONFIG_FILE="$SHARED_MOCK_DIR/mock.json"
+      RUNTIME_CONFIG_MOUNT_PATH="/workspace/.config/mock"
+      RUNTIME_CONFIG_BASENAME="mock.json"
+      DEFAULT_BASE_IMAGE="python:3.12-alpine"
+      POOL_LABEL="${POOL_LABEL:-app=mock-agent}"
+      POOL_NAME_PREFIX="${POOL_NAME_PREFIX:-mock-agent}"
+      BASE_IMAGE="${BASE_IMAGE:-$DEFAULT_BASE_IMAGE}"
+      RUNNER_IMAGE="${RUNNER_IMAGE:-cloudclaw/mock-runner:latest}"
+      DOCKER_TASK_CMD="${DOCKER_TASK_CMD:-run_mock_task.sh}"
+      ;;
     *)
-      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: opencode|openclaw|claudecode)"
+      die "unsupported AGENT_RUNTIME: $AGENT_RUNTIME (supported: opencode|openclaw|claudecode|mock)"
       ;;
   esac
   AGENT_RUNTIME="$runtime"
@@ -247,7 +262,7 @@ EOF
 }
 
 ensure_dirs() {
-  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$SHARED_OPENCLAW_DIR" "$SHARED_SKILLS_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
+  mkdir -p "$CC_HOME/bin" "$RUNNER_DIR" "$SHARED_DIR" "$SHARED_CLAUDECODE_DIR" "$SHARED_OPENCODE_DIR" "$SHARED_OPENCLAW_DIR" "$SHARED_MOCK_DIR" "$SHARED_SKILLS_DIR" "$DATA_DIR" "$DATA_DIR/runs" "$USER_RUNTIME_DIR" "$LOG_DIR" "$RUN_DIR"
   if [ -d "$LEGACY_OPENCODE_CONFIG_DIR" ] && [ -n "$(ls -A "$LEGACY_OPENCODE_CONFIG_DIR" 2>/dev/null)" ] && [ -z "$(ls -A "$SHARED_OPENCODE_DIR" 2>/dev/null)" ]; then
     cp -R "$LEGACY_OPENCODE_CONFIG_DIR/." "$SHARED_OPENCODE_DIR/" || true
     log "migrated legacy opencode shared config: $LEGACY_OPENCODE_CONFIG_DIR -> $SHARED_OPENCODE_DIR"
@@ -591,6 +606,20 @@ init_claudecode_config_full() {
   log "initialized claudecode config: $RUNTIME_CONFIG_FILE"
 }
 
+init_mock_config_full() {
+  ensure_dirs
+  mkdir -p "$RUNTIME_CONFIG_DIR"
+  if [ -s "$RUNTIME_CONFIG_FILE" ]; then
+    log "mock config already exists, skip bootstrap: $RUNTIME_CONFIG_FILE"
+    return
+  fi
+
+  cat >"$RUNTIME_CONFIG_FILE" <<EOF
+{"runtime":"mock","sleep_ms":"${MOCK_TASK_SLEEP_MS:-5000}","note":"mock runtime uses fixed-duration task execution"}
+EOF
+  log "initialized mock config: $RUNTIME_CONFIG_FILE"
+}
+
 init_full_config() {
   load_runtime_profile
   if [ "$RUNTIME_NAME" = "opencode" ]; then
@@ -599,6 +628,10 @@ init_full_config() {
   fi
   if [ "$RUNTIME_NAME" = "openclaw" ]; then
     init_openclaw_config_full
+    return
+  fi
+  if [ "$RUNTIME_NAME" = "mock" ]; then
+    init_mock_config_full
     return
   fi
   init_claudecode_config_full
@@ -640,6 +673,19 @@ If it's empty, cloudclawctl installs openclaw on host (git method) and asks you 
 
 Then run:
   AGENT_RUNTIME=openclaw bash $0 pool start
+EOF
+    return
+  fi
+  if [ "$RUNTIME_NAME" = "mock" ]; then
+    cat <<EOF
+mock config path:
+  $RUNTIME_CONFIG_FILE
+
+The mock runtime does not require external provider credentials.
+Use MOCK_TASK_SLEEP_MS to control fixed task service time.
+
+Then run:
+  AGENT_RUNTIME=mock bash $0 pool start
 EOF
     return
   fi
@@ -695,8 +741,9 @@ install_all() {
   cp "$SCRIPT_DIR/templates/run_opencode_task.sh" "$RUNNER_DIR/run_opencode_task.sh"
   cp "$SCRIPT_DIR/templates/run_openclaw_task.sh" "$RUNNER_DIR/run_openclaw_task.sh"
   cp "$SCRIPT_DIR/templates/run_claudecode_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
+  cp "$SCRIPT_DIR/templates/run_mock_task.sh" "$RUNNER_DIR/run_mock_task.sh"
   cp "$SCRIPT_DIR/templates/Dockerfile.runner" "$RUNNER_DIR/Dockerfile.runner"
-  chmod +x "$RUNNER_DIR/run_opencode_task.sh" "$RUNNER_DIR/run_openclaw_task.sh" "$RUNNER_DIR/run_claudecode_task.sh"
+  chmod +x "$RUNNER_DIR/run_opencode_task.sh" "$RUNNER_DIR/run_openclaw_task.sh" "$RUNNER_DIR/run_claudecode_task.sh" "$RUNNER_DIR/run_mock_task.sh"
 
   resolved_base_image="$(resolve_base_image)"
   log "using base image: $resolved_base_image"
@@ -744,7 +791,7 @@ start_pool() {
       if [ -n "${OPENCLAW_BIN:-}" ]; then
         env_args+=("-e" "OPENCLAW_BIN=${OPENCLAW_BIN}")
       fi
-    else
+    elif [ "$RUNTIME_NAME" = "claudecode" ]; then
       env_args+=(
         "-e" "CLAUDECODE_CONFIG_PATH=$(runtime_config_mount_file)"
         "-e" "CLAUDECODE_EXEC_MODE=${CLAUDECODE_EXEC_MODE:-gateway}"
@@ -766,6 +813,11 @@ start_pool() {
       fi
       if [ -n "${CLAUDECODE_TIMEOUT_SECONDS:-}" ]; then
         env_args+=("-e" "CLAUDECODE_TIMEOUT_SECONDS=${CLAUDECODE_TIMEOUT_SECONDS}")
+      fi
+    else
+      env_args+=("-e" "MOCK_TASK_SLEEP_MS=${MOCK_TASK_SLEEP_MS:-5000}")
+      if [ -n "${MOCK_TASK_OUTPUT_PREFIX:-}" ]; then
+        env_args+=("-e" "MOCK_TASK_OUTPUT_PREFIX=${MOCK_TASK_OUTPUT_PREFIX}")
       fi
     fi
     if [ "$CONTAINER_HARDEN" = "1" ]; then
@@ -1092,13 +1144,15 @@ Examples:
   AGENT_RUNTIME=openclaw $0 up
   AGENT_RUNTIME=claudecode $0 init
   AGENT_RUNTIME=claudecode $0 up
+  AGENT_RUNTIME=mock $0 init
+  AGENT_RUNTIME=mock $0 up
   AGENT_RUNTIME=opencode $0 smoke
   AGENT_RUNTIME=openclaw $0 smoke
   AGENT_RUNTIME=opencode $0 task trace tsk_xxx
   AGENT_RUNTIME=opencode $0 task watch tsk_xxx 1
 
 Environment overrides:
-  AGENT_RUNTIME (required: opencode|openclaw|claudecode)
+  AGENT_RUNTIME (required: opencode|openclaw|claudecode|mock)
   CC_HOME (default: repo-relative ./cloudclaw_data unless overridden)
   CC_HOME_FILE (default: $REPO_ROOT/cloudclaw_data-home, stores persisted CC_HOME)
   DB_DRIVER (default: postgres; postgres only)
@@ -1106,7 +1160,7 @@ Environment overrides:
   POOL_SIZE (default: 3)
   POOL_LABEL (runtime default: app=<runtime>-agent)
   POOL_NAME_PREFIX (runtime default: <runtime>-agent)
-  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, openclaw=ghcr.io/anomalyco/openclaw:latest, claudecode=claudecode:latest)
+  BASE_IMAGE (runtime default: opencode=ghcr.io/anomalyco/opencode:latest, openclaw=ghcr.io/anomalyco/openclaw:latest, claudecode=claudecode:latest, mock=python:3.12-alpine)
   FALLBACK_BASE_IMAGE (optional fallback image when BASE_IMAGE is unavailable)
   RUNNER_IMAGE (runtime default: cloudclaw/<runtime>-runner:latest)
   AGENT_OWNER_UID / AGENT_OWNER_GID (optional container user id)
@@ -1129,8 +1183,10 @@ Environment overrides:
   CLAUDECODE_HOST_CONFIG_DIR (default: ~/.claudecode, source path for claudecode init bootstrap)
   CLAUDECODE_OFFICIAL_CONFIG_DIR (default: ~/.claude, official Claude Code settings dir, imported as config.json)
   CLAUDECODE_CONFIG_MOUNT_PATH (default: /workspace/.claudecode)
-  DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_openclaw_task.sh|run_claudecode_task.sh)
+  DOCKER_TASK_CMD (runtime default: run_opencode_task.sh|run_openclaw_task.sh|run_claudecode_task.sh|run_mock_task.sh)
   DOCKER_REMOTE_DIR (default: /tmp/cloudclaw)
+  MOCK_TASK_SLEEP_MS (runtime=mock only, default: 5000)
+  MOCK_TASK_OUTPUT_PREFIX (runtime=mock only, optional fixed output prefix)
   CLAUDECODE_EXEC_MODE (default: gateway, runtime=claudecode only)
   CLAUDECODE_GATEWAY_TOKEN / CLAUDECODE_GATEWAY_BIND / CLAUDECODE_GATEWAY_PORT / CLAUDECODE_GATEWAY_MANAGE (optional)
   CLAUDECODE_AGENT_ID / CLAUDECODE_TIMEOUT_SECONDS (optional)
@@ -1140,6 +1196,7 @@ Notes:
   PostgreSQL is required; set DB_DSN before running db-related commands.
   opencode shared config dir: <CC_HOME>/shared/opencode
   openclaw shared config dir: <CC_HOME>/shared/openclaw
+  mock shared config file: <CC_HOME>/shared/mock/mock.json
   openclaw init does NOT fallback to opencode config; host openclaw config must be prepared first.
   "up" auto-runs init when runtime config does not exist.
   pool startup always refreshes containers to avoid stale config/env drift.

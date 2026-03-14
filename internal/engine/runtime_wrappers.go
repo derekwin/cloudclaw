@@ -24,6 +24,14 @@ func (e *DockerClaudecodeExecutor) Name() string {
 	return "docker-claudecode"
 }
 
+type DockerMockExecutor struct {
+	DockerRuntimeExecutor
+}
+
+func (e *DockerMockExecutor) Name() string {
+	return "docker-mock"
+}
+
 type K8sOpencodeExecutor struct {
 	K8sRuntimeExecutor
 }

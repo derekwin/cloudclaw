@@ -88,7 +88,7 @@ func runCmd(args []string) error {
 	userRuntimeDir := fs.String("user-runtime-dir", "", "host directory for per-user runtime state in ephemeral workspace mode")
 	workspaceMode := fs.String("workspace-mode", "copy", "workspace transfer mode: copy|mount (docker executors only)")
 	workspaceMountPath := fs.String("workspace-mount-path", "/workspace/cloudclaw/runs", "workspace path inside docker container when --workspace-mode=mount")
-	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode")
+	executorMode := fs.String("executor", "", "executor mode (required): k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode|docker-mock")
 	k8sNamespace := fs.String("k8s-namespace", "default", "kubernetes namespace for runtime pods")
 	k8sContext := fs.String("k8s-context", "", "optional kubernetes context")
 	k8sLabelSelector := fs.String("k8s-label-selector", defaultK8sLabelSelector, "label selector for runtime pods")
@@ -112,7 +112,7 @@ func runCmd(args []string) error {
 		return err
 	}
 	if strings.TrimSpace(*executorMode) == "" {
-		return fmt.Errorf("executor is required: k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode")
+		return fmt.Errorf("executor is required: k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode|docker-mock")
 	}
 	applyExecutorRuntimeDefaults(*executorMode, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix)
 
@@ -175,7 +175,7 @@ func runCmd(args []string) error {
 		} else {
 			ex = &engine.K8sClaudecodeExecutor{K8sRuntimeExecutor: runtimeExecutor}
 		}
-	case "docker-opencode", "docker-openclaw", "docker-claudecode":
+	case "docker-opencode", "docker-openclaw", "docker-claudecode", "docker-mock":
 		if strings.TrimSpace(*dockerTaskCmd) == "" {
 			return fmt.Errorf("docker-task-cmd is required for %s executor", *executorMode)
 		}
@@ -208,6 +208,8 @@ func runCmd(args []string) error {
 			ex = &engine.DockerOpencodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		} else if *executorMode == "docker-openclaw" {
 			ex = &engine.DockerOpenclawExecutor{DockerRuntimeExecutor: runtimeExecutor}
+		} else if *executorMode == "docker-mock" {
+			ex = &engine.DockerMockExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		} else {
 			ex = &engine.DockerClaudecodeExecutor{DockerRuntimeExecutor: runtimeExecutor}
 		}
@@ -583,7 +585,7 @@ func printJSON(v any) error {
 
 func usage() {
 	fmt.Println(`cloudclaw commands:
-	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver postgres --db-dsn <postgres-dsn> --executor k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode]
+	  cloudclaw run [--data-dir ./cloudclaw_data/data --db-driver postgres --db-dsn <postgres-dsn> --executor k8s-opencode|k8s-openclaw|k8s-claudecode|docker-opencode|docker-openclaw|docker-claudecode|docker-mock]
 	  cloudclaw task submit --user-id u1 --task-type search --input "..."
 	  cloudclaw task status --task-id tsk_xxx
 	  cloudclaw task cancel --task-id tsk_xxx
@@ -694,6 +696,9 @@ func workspaceContainerDirForDocker(mode, mountPath string) string {
 
 func runtimeNameForExecutor(executorMode string) string {
 	mode := strings.ToLower(strings.TrimSpace(executorMode))
+	if isMockExecutor(mode) {
+		return "mock"
+	}
 	if isClaudecodeExecutor(mode) {
 		return "claudecode"
 	}
@@ -781,6 +786,21 @@ func printSummaryTaskList(tasks []taskSummaryTask) {
 
 func applyExecutorRuntimeDefaults(executorMode string, k8sLabelSelector, dockerLabelSelector, dockerImage, dockerNamePrefix *string) {
 	mode := strings.ToLower(strings.TrimSpace(executorMode))
+	if isMockExecutor(mode) {
+		if strings.TrimSpace(*k8sLabelSelector) == defaultK8sLabelSelector {
+			*k8sLabelSelector = "app=mock-agent"
+		}
+		if strings.TrimSpace(*dockerLabelSelector) == defaultDockerLabelSelector {
+			*dockerLabelSelector = "app=mock-agent"
+		}
+		if strings.TrimSpace(*dockerImage) == defaultDockerImage {
+			*dockerImage = "alpine:3.20"
+		}
+		if strings.TrimSpace(*dockerNamePrefix) == defaultDockerNamePrefix {
+			*dockerNamePrefix = "mock-agent"
+		}
+		return
+	}
 	if isOpenclawExecutor(mode) {
 		if strings.TrimSpace(*k8sLabelSelector) == defaultK8sLabelSelector {
 			*k8sLabelSelector = "app=openclaw-agent"
@@ -820,4 +840,8 @@ func isOpenclawExecutor(mode string) bool {
 
 func isClaudecodeExecutor(mode string) bool {
 	return strings.Contains(mode, "claudecode")
+}
+
+func isMockExecutor(mode string) bool {
+	return strings.Contains(mode, "mock")
 }

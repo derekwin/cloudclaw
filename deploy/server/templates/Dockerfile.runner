@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 COPY --chmod=0755 run_opencode_task.sh /usr/local/bin/run_opencode_task.sh
 COPY --chmod=0755 run_openclaw_task.sh /usr/local/bin/run_openclaw_task.sh
 COPY --chmod=0755 run_claudecode_task.sh /usr/local/bin/run_claudecode_task.sh
+COPY --chmod=0755 run_mock_task.sh /usr/local/bin/run_mock_task.sh
 
 # Run as non-root user inside the image.
 RUN addgroup -S cloudclaw && \
