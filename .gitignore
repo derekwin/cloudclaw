@@ -12,4 +12,4 @@ cloudclaw_data-home
 __pycache__/
 *.pyc
 
-experiment_artifacts/bin/
+experiment_artifacts
