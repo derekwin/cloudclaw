@@ -56,6 +56,7 @@ inject_fault() {
       AGENT_RUNTIME="$AGENT_RUNTIME" DB_DSN="$DB_DSN" POOL_SIZE="$POOL_SIZE_VALUE" WORKSPACE_MODE="$WORKSPACE_MODE_VALUE" WORKSPACE_STATE_MODE="$WORKSPACE_STATE_MODE_VALUE" RETRY_PRIORITY="$retry_priority" bash "$CLOUDCLAW_CTL" runner stop
       sleep "$down_seconds"
       AGENT_RUNTIME="$AGENT_RUNTIME" DB_DSN="$DB_DSN" POOL_SIZE="$POOL_SIZE_VALUE" WORKSPACE_MODE="$WORKSPACE_MODE_VALUE" WORKSPACE_STATE_MODE="$WORKSPACE_STATE_MODE_VALUE" RETRY_PRIORITY="$retry_priority" bash "$CLOUDCLAW_CTL" runner start
+      wait_runner_ready "$POOL_SIZE_VALUE" || die "runner failed to recover after injected runner fault"
       ;;
     container)
       local container_id=""
@@ -97,7 +98,7 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
 
       log "running fault-recovery workload: $run_slug"
       run_exit=0
-      if ! (
+      (
         "$TASKSIM_BIN" \
           --data-dir "$DATA_DIR" \
           --db-driver postgres \
@@ -128,9 +129,7 @@ for retry_priority in "${RETRY_PRIORITIES[@]}"; do
         fi
       done
 
-      if ! wait "$tasksim_pid"; then
-        run_exit=$?
-      fi
+      wait "$tasksim_pid" || run_exit=$?
 
       cat >"$meta_file" <<EOF
 {

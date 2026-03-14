@@ -84,7 +84,7 @@ export CC_EXP_USERS="sim_u1,sim_u2,sim_u3,sim_u4"
 export CC_EXP_TASKS_PER_USER_LIST="5 10 20 40"
 export CC_EXP_WORKSPACE_MODES="mount copy"
 export CC_EXP_WORKSPACE_STATE_MODES="ephemeral"
-export CC_EXP_REPEAT=3
+export CC_EXP_REPEAT=1
 
 bash scripts/experiments/01_throughput_latency.sh
 ```
